@@ -1,0 +1,461 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Local dev: SQLite file (no Postgres password). For production PostgreSQL, see docs/DATABASE_PROVIDERS.md
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// --- Reference geography & NVS regions ---
+
+model RegionOffice {
+  id          String     @id @default(cuid())
+  code        String     @unique // e.g. "RO-1" .. "RO-8"
+  name        String
+  description String?
+  states      State[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model State {
+  id             String     @id @default(cuid())
+  lgdCode        Int?       @unique
+  name           String
+  normalizedName String     @unique
+  regionId       String?
+  region         RegionOffice? @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  districts      District[]
+  schools        School[]
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([regionId])
+  @@index([name])
+}
+
+model District {
+  id             String   @id @default(cuid())
+  stateId        String
+  state          State    @relation(fields: [stateId], references: [id], onDelete: Cascade)
+  lgdCode        Int?
+  name           String
+  normalizedName String
+  schools        School[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([stateId, normalizedName])
+  @@index([stateId])
+  @@index([name])
+}
+
+// --- Auth & RBAC ---
+
+model Role {
+  id          String           @id @default(cuid())
+  name        String           @unique // super_admin, founder, analyst, viewer
+  description String?
+  users       FounderUserRole[]
+}
+
+model FounderUser {
+  id           String            @id @default(cuid())
+  rollcode     String            @unique
+  passwordHash String
+  displayName  String?
+  isActive     Boolean           @default(true)
+  roles        FounderUserRole[]
+  auditLogs    AuditLog[]
+  progressUpdates SchoolProgress[]
+  notesCreated SchoolNote[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+}
+
+model FounderUserRole {
+  userId String
+  roleId String
+  user   FounderUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role        @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+// --- Core school ---
+
+enum ParsingStatus {
+  PENDING
+  PARTIAL
+  COMPLETE
+  FAILED
+}
+
+enum ReviewStatus {
+  UNREVIEWED
+  IN_REVIEW
+  REVIEWED
+}
+
+enum CompletionPipelineStatus {
+  UNREVIEWED
+  REVIEWED
+  CONTACTED
+  PILOT_READY
+  PILOT_RUNNING
+  DONE
+}
+
+model School {
+  udise String @id
+
+  schoolName           String
+  managementName       String?
+  categoryName         String?
+  schoolType           String?
+  classesFrom          Int?
+  classesTo            Int?
+  yearOfEstablishment  Int?
+  residentialStatus    String?
+  cbseAffiliationSec   String?
+  cbseAffiliationHsec  String?
+  ruralUrban           String?
+
+  // API / scrape metadata (organizational vs geographic)
+  apiStateName     String?
+  geographicState  String?
+  geographicDistrict String?
+  blockName        String?
+  villageName      String?
+  clusterName      String?
+  pincode          String?
+  lgdBlockId       Int?
+  lgdDistrictId    Int?
+  latitude         Float?
+  longitude        Float?
+
+  stateId   String?
+  districtId String?
+  state     State?    @relation(fields: [stateId], references: [id], onDelete: SetNull)
+  district  District? @relation(fields: [districtId], references: [id], onDelete: SetNull)
+
+  totalStudents Int?
+  totalBoys     Int?
+  totalGirls    Int?
+  totalTeachers Int?
+
+  waterAvailable       Boolean?
+  electricityAvailable Boolean?
+  internetAvailable    Boolean?
+  solarAvailable       Boolean?
+  playgroundAvailable  Boolean?
+  libraryAvailable     Boolean?
+
+  hmEmail  String?
+  hmMobile String?
+
+  pdfRelativePath       String?
+  screenshotRelativePath String?
+  sourcePdfHash         String?
+  extractorVersion      String   @default("1.0.0")
+
+  /// Report-card period when detected from PDF (e.g. 2024-25)
+  academicYear                  String?
+  lastPdfExtractedAt            DateTime?
+  overallExtractionConfidence   Float?
+  importLastError               String?
+
+  parsingStatus    ParsingStatus @default(PENDING)
+  reviewStatus     ReviewStatus  @default(UNREVIEWED)
+  pipelineStatus   CompletionPipelineStatus @default(UNREVIEWED)
+  profileCompletenessPct Float?   @default(0)
+  pilotSuitable        Boolean? @default(false)
+
+  manualRevenueOccupancy   Float?
+  manualWashPrice          Float?
+  manualWashesPerStudentMonth Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  profile              SchoolProfile?
+  infra                SchoolInfra?
+  digital              SchoolDigitalFacilities?
+  teachers             SchoolTeacherBreakdown[]
+  enrolmentSocial      SchoolEnrolmentSocial[]
+  enrolmentMinority    SchoolEnrolmentMinority[]
+  enrolmentOthers      SchoolEnrolmentOthers[]
+  enrolmentAge         SchoolEnrolmentAge[]
+  revenueScenarios     SchoolRevenueScenario[]
+  progressEvents       SchoolProgress[]
+  notes                SchoolNote[]
+  documents            SchoolDocument[]
+  rawExtractions       SchoolExtractionRaw[]
+  reportCardSnapshot   SchoolReportCardSnapshot?
+
+  @@index([stateId])
+  @@index([districtId])
+  @@index([geographicState])
+  @@index([geographicDistrict])
+  @@index([parsingStatus])
+  @@index([pipelineStatus])
+  @@index([totalStudents])
+  @@index([updatedAt])
+}
+
+/// Full structured snapshot from the latest processed report-card PDF (canonical provenance + raw bundle).
+model SchoolReportCardSnapshot {
+  udise                   String   @id
+  school                  School   @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  academicYear            String?
+  sourcePdfHash           String
+  pdfRelativePath         String
+  screenshotRelativePath  String?
+  payload                 Json
+  overallConfidence       Float
+  extractedAt             DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
+
+model SchoolProfile {
+  udise     String @id
+  school    School @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  rawJson   Json?
+  updatedAt DateTime @updatedAt
+}
+
+model SchoolInfra {
+  udise              String  @id
+  school             School  @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  puccaBuilding      Boolean?
+  functionalToiletsB Int?
+  functionalToiletsG Int?
+  rampsAvailable     Boolean?
+  medicalCheckup     Boolean?
+  extra              Json?
+  updatedAt          DateTime @updatedAt
+}
+
+model SchoolDigitalFacilities {
+  udise         String   @id
+  school        School   @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  smartClassTv  Int?
+  laptops       Int?
+  desktops      Int?
+  tablets       Int?
+  printers      Int?
+  extra         Json?
+  updatedAt     DateTime @updatedAt
+}
+
+model SchoolTeacherBreakdown {
+  id        String   @id @default(cuid())
+  udise     String
+  school    School   @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  category  String   // qualification, gender, etc.
+  label     String
+  count     Int
+  extra     Json?
+  createdAt DateTime @default(now())
+
+  @@index([udise])
+}
+
+model SchoolEnrolmentSocial {
+  id        String   @id @default(cuid())
+  udise     String
+  school    School   @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  category  String
+  boys      Int?
+  girls     Int?
+  total     Int?
+  extra     Json?
+  createdAt DateTime @default(now())
+
+  @@index([udise])
+}
+
+model SchoolEnrolmentMinority {
+  id        String   @id @default(cuid())
+  udise     String
+  school    School   @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  category  String
+  boys      Int?
+  girls     Int?
+  total     Int?
+  extra     Json?
+  createdAt DateTime @default(now())
+
+  @@index([udise])
+}
+
+model SchoolEnrolmentOthers {
+  id        String   @id @default(cuid())
+  udise     String
+  school    School   @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  category  String
+  boys      Int?
+  girls     Int?
+  total     Int?
+  extra     Json?
+  createdAt DateTime @default(now())
+
+  @@index([udise])
+}
+
+model SchoolEnrolmentAge {
+  id        String   @id @default(cuid())
+  udise     String
+  school    School   @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  ageBand   String
+  boys      Int?
+  girls     Int?
+  total     Int?
+  extra     Json?
+  createdAt DateTime @default(now())
+
+  @@index([udise])
+}
+
+enum RevenueScenarioKind {
+  LOW
+  MEDIUM
+  HIGH
+  CUSTOM
+}
+
+model SchoolRevenueScenario {
+  id              String              @id @default(cuid())
+  udise           String
+  school          School              @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  kind            RevenueScenarioKind @default(CUSTOM)
+  label           String?
+  inputs          Json                // occupancy, price, frequency, etc.
+  monthlyRevenue  Float?
+  annualRevenue   Float?
+  revenueBoys     Float?
+  revenueGirls    Float?
+  revenueTotal    Float?
+  computedAt      DateTime            @default(now())
+
+  @@index([udise])
+}
+
+model SchoolProgress {
+  id        String   @id @default(cuid())
+  udise     String
+  school    School   @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  fromStatus CompletionPipelineStatus?
+  toStatus  CompletionPipelineStatus
+  note      String?
+  userId    String?
+  user      FounderUser? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  @@index([udise])
+}
+
+model SchoolNote {
+  id             String   @id @default(cuid())
+  udise          String
+  school         School   @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  waterReliability   String?
+  electricityReliability String?
+  spaceAvailable     String?
+  staffSupport       String?
+  comments           String?
+  followUpAt         DateTime?
+  createdById    String?
+  createdBy      FounderUser? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([udise])
+}
+
+model SchoolDocument {
+  id        String   @id @default(cuid())
+  udise     String
+  school    School   @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  docType   String   // report_card_pdf, screenshot
+  path      String
+  sha256    String
+  mimeType  String?
+  createdAt DateTime @default(now())
+
+  @@index([udise])
+}
+
+model SchoolExtractionRaw {
+  id                String   @id @default(cuid())
+  udise             String
+  school            School   @relation(fields: [udise], references: [udise], onDelete: Cascade)
+  sectionKey        String
+  rawText           String?
+  payload           Json?
+  confidence        Float    @default(0)
+  extractorVersion  String
+  warnings          Json?
+  createdAt         DateTime @default(now())
+
+  @@index([udise])
+}
+
+// --- Import & audit ---
+
+enum ImportJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  PARTIAL
+}
+
+model ImportJob {
+  id                 String          @id @default(cuid())
+  status             ImportJobStatus @default(PENDING)
+  startedAt          DateTime?
+  finishedAt         DateTime?
+  totalFiles         Int             @default(0)
+  processedFiles     Int             @default(0)
+  successCount       Int             @default(0)
+  errorCount         Int             @default(0)
+  lastProcessedUdise String?
+  forceReextract     Boolean         @default(false)
+  errors             ImportError[]
+  createdAt          DateTime        @default(now())
+}
+
+model ImportError {
+  id        String    @id @default(cuid())
+  jobId     String
+  job       ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  udise     String?
+  severity  String    @default("error")
+  message   String
+  stack     String?
+  payload   Json?
+  createdAt DateTime  @default(now())
+
+  @@index([jobId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      FounderUser? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String
+  diff       Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+}

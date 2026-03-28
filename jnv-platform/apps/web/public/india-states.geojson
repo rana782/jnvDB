@@ -1,0 +1,37 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "Maharashtra" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[72.5, 16], [80.5, 16], [80.5, 22.5], [72.5, 22.5], [72.5, 16]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Uttar Pradesh" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[76, 24], [84.5, 24], [84.5, 30.5], [76, 30.5], [76, 24]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Karnataka" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[73.5, 11.5], [78.5, 11.5], [78.5, 16], [73.5, 16], [73.5, 11.5]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Bihar" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[83, 24], [88.5, 24], [88.5, 27.5], [83, 27.5], [83, 24]]]
+      }
+    }
+  ]
+}

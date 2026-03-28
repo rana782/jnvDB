@@ -1,0 +1,26 @@
+{
+  "name": "jnv-platform",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @jnv/api",
+    "build": "npm run build -w @jnv/api && npm run build -w @jnv/web",
+    "lint": "npm run lint -w @jnv/api && npm run lint -w @jnv/web",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
+    "test": "npm run test -w @jnv/api",
+    "test:ci": "npm run test:ci -w @jnv/api",
+    "db:generate": "npm run db:generate -w @jnv/api",
+    "db:migrate": "npm run db:migrate -w @jnv/api",
+    "db:push": "npm run db:push -w @jnv/api",
+    "db:setup": "npm run db:setup -w @jnv/api",
+    "import:run": "npm run import:run -w @jnv/api",
+    "e2e": "npm run e2e -w @jnv/web",
+    "e2e:verify": "npm run e2e:verify -w @jnv/web",
+    "verify:stack": "npm run db:setup -w @jnv/api && npm run import:run -w @jnv/api && npm run e2e:verify -w @jnv/web"
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2"
+  }
+}

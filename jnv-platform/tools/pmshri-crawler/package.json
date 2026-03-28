@@ -1,0 +1,19 @@
+{
+  "name": "pmshri-crawler",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright crawler for PM SHRI portal",
+  "scripts": {
+    "start": "node src/main.js",
+    "download-pdfs": "node src/download-pdfs.js",
+    "fetch-missing-pdfs": "node scripts/fetch-missing-pdfs.mjs",
+    "install-browsers": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

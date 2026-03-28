@@ -1,0 +1,8 @@
+﻿node_modules/
+data/*.json
+data/pdfs/*
+data/screenshots/*
+!data/pdfs/.gitkeep
+!data/screenshots/.gitkeep
+.env
+*.log
