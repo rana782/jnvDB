@@ -1,18 +1,38 @@
 import { z } from "zod";
 
-export const revenueInputSchema = z.object({
+const revenueInputBase = z.object({
   totalStudents: z.number().nonnegative(),
   boys: z.number().nonnegative().optional(),
   girls: z.number().nonnegative().optional(),
-  occupancyRate: z.number().min(0).max(1).default(0.85),
+  /** Share of students using the service (0–1). */
+  adoptionRate: z.number().min(0).max(1).default(0.85),
   pricePerWash: z.number().positive().default(30),
   washesPerStudentPerMonth: z.number().nonnegative().default(4),
   monthlyUsageDays: z.number().int().positive().default(22),
 });
 
+/** Accepts `occupancyRate` as a deprecated alias for `adoptionRate` (import / legacy clients). */
+export const revenueInputSchema = z.preprocess((raw: unknown) => {
+  if (!raw || typeof raw !== "object") return raw;
+  const o = raw as Record<string, unknown>;
+  if (o.adoptionRate == null && o.occupancyRate != null) {
+    return { ...o, adoptionRate: o.occupancyRate };
+  }
+  return raw;
+}, revenueInputBase);
+
 export type RevenueInput = z.infer<typeof revenueInputSchema>;
-/** Arguments accepted by `calculateRevenue` (Zod applies defaults for omitted fields). */
-export type RevenueInputArg = z.input<typeof revenueInputSchema>;
+/** Caller-facing input (defaults applied in `calculateRevenue`). `occupancyRate` is a legacy alias for `adoptionRate`. */
+export type RevenueInputArg = {
+  totalStudents: number;
+  boys?: number;
+  girls?: number;
+  adoptionRate?: number;
+  occupancyRate?: number;
+  pricePerWash?: number;
+  washesPerStudentPerMonth?: number;
+  monthlyUsageDays?: number;
+};
 
 export type RevenueBreakdown = {
   monthlyRevenue: number;
@@ -27,7 +47,8 @@ export type RevenueBreakdown = {
 
 /**
  * Simple laundry-style revenue model: effective_students * washes_per_month * price_per_wash.
- * Splits by boys/girls proportionally when counts exist; otherwise all on total.
+ * `adoptionRate` is the share of enrolled students using the service. Revenue is split by boys/girls
+ * headcount share when counts exist; otherwise 50/50 on the monthly total.
  */
 export function calculateRevenue(input: RevenueInputArg): RevenueBreakdown {
   const parsed = revenueInputSchema.parse(input);
@@ -42,7 +63,7 @@ export function calculateRevenue(input: RevenueInputArg): RevenueBreakdown {
     /* use sum as total */
   }
   const headcount = total > 0 ? total : boys + girls;
-  const effectiveStudents = headcount * parsed.occupancyRate;
+  const effectiveStudents = headcount * parsed.adoptionRate;
   const monthlyWashes = effectiveStudents * parsed.washesPerStudentPerMonth;
   const monthlyRevenue = monthlyWashes * parsed.pricePerWash;
   const annualRevenue = monthlyRevenue * 12;
@@ -62,14 +83,19 @@ export function calculateRevenue(input: RevenueInputArg): RevenueBreakdown {
   };
 }
 
-export function scenarioPresets(
-  kind: "LOW" | "MEDIUM" | "HIGH",
-  base: RevenueInputArg,
-): RevenueBreakdown {
-  const price = kind === "LOW" ? 20 : kind === "MEDIUM" ? 30 : 40;
-  const washes = kind === "LOW" ? 2 : kind === "MEDIUM" ? 4 : 6;
-  const occ = kind === "LOW" ? 0.6 : kind === "MEDIUM" ? 0.85 : 0.95;
-  return calculateRevenue({ ...base, pricePerWash: price, washesPerStudentPerMonth: washes, occupancyRate: occ });
+/** Default price, washes/month, and adoption for scenario presets. */
+export function presetModelInputs(kind: "LOW" | "MEDIUM" | "HIGH"): {
+  pricePerWash: number;
+  washesPerStudentPerMonth: number;
+  adoptionRate: number;
+} {
+  if (kind === "LOW") return { pricePerWash: 20, washesPerStudentPerMonth: 2, adoptionRate: 0.6 };
+  if (kind === "MEDIUM") return { pricePerWash: 30, washesPerStudentPerMonth: 4, adoptionRate: 0.85 };
+  return { pricePerWash: 40, washesPerStudentPerMonth: 6, adoptionRate: 0.95 };
+}
+
+export function scenarioPresets(kind: "LOW" | "MEDIUM" | "HIGH", base: RevenueInputArg): RevenueBreakdown {
+  return calculateRevenue({ ...base, ...presetModelInputs(kind) });
 }
 
 function round2(n: number) {

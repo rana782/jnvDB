@@ -7,6 +7,7 @@ dist/
 *.log
 apps/api/prisma/*.db
 apps/api/prisma/*.db-journal
+apps/api/prisma/prisma/
 apps/web/e2e/screenshots-output/
 apps/api/coverage/
 apps/web/test-results/

@@ -9,6 +9,7 @@ import { authenticate, requireRoles } from "../auth/guards.js";
 import {
   compareSchoolsCanonical,
   getSchoolCanonical,
+  getSchoolDetailApi,
   getSchoolDetailRow,
   listSchools,
   patchManualFields,
@@ -18,6 +19,7 @@ import {
 } from "./schools.service.js";
 import { getPrisma } from "../../shared/prisma.js";
 import { AppError } from "../../shared/errors.js";
+import { pipelineStatusSchema } from "../../shared/pipeline-status.js";
 
 function resolveAbsoluteFromRelative(repoRoot: string | undefined, rel: string): string {
   if (path.isAbsolute(rel)) return rel;
@@ -66,7 +68,7 @@ export const registerSchoolRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/schools/:udise", async (request) => {
     const { udise } = request.params as { udise: string };
-    return getSchoolCanonical(udise);
+    return getSchoolDetailApi(udise);
   });
 
   app.get("/schools/:udise/charts", async (request) => {
@@ -98,9 +100,7 @@ export const registerSchoolRoutes: FastifyPluginAsync = async (app) => {
     { preHandler: [authenticate, requireRoles("founder", "super_admin", "analyst")] },
     async (request) => {
       const { udise } = request.params as { udise: string };
-      const body = z
-        .object({ pipelineStatus: z.string().optional() })
-        .parse(request.body);
+      const body = z.object({ pipelineStatus: pipelineStatusSchema }).parse(request.body);
       const out = await patchSchoolStatus(udise, body, request.founder!.id);
       await audit(request.founder!.id, "school.status", udise, body, request);
       return out;

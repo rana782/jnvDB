@@ -13,7 +13,10 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.8",
+    "@tanstack/react-virtual": "^3.13.23",
+    "framer-motion": "^12.38.0",
     "react": "^19.0.0",
+    "react-countup": "^6.5.3",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.1",
     "react-simple-maps": "^3.0.0",

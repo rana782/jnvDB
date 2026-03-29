@@ -14,16 +14,16 @@ export function LoginPage() {
     mutationFn: () => apiLogin(rollcode, password),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["me"] });
-      navigate("/dashboard", { replace: true });
+      navigate("/map", { replace: true });
     },
     onError: (e: Error) => setError(e.message),
   });
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4">
-      <div className="w-full max-w-md rounded-xl border border-slate-800 bg-navy-light p-8 shadow-xl">
-        <h1 className="text-xl font-semibold text-white">Founder login</h1>
-        <p className="mt-1 text-sm text-slate-400">Rollcode and password (httpOnly cookie session).</p>
+    <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
+      <div className="w-full max-w-md rounded-xl border border-line bg-card p-8 shadow-lg">
+        <h1 className="text-xl font-semibold text-ink">Founder login</h1>
+        <p className="mt-1 text-sm text-muted">Rollcode and password (httpOnly cookie session).</p>
         <form
           className="mt-6 space-y-4"
           onSubmit={(e) => {
@@ -33,21 +33,21 @@ export function LoginPage() {
           }}
         >
           <div>
-            <label htmlFor="login-rollcode" className="text-xs text-slate-400">
+            <label htmlFor="login-rollcode" className="text-xs font-medium text-muted">
               Rollcode
             </label>
             <input
               id="login-rollcode"
               name="rollcode"
               aria-label="Rollcode"
-              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-lg border border-line bg-canvas px-3 py-2.5 text-sm text-ink outline-none transition-all duration-150 focus:border-accent focus:ring-2 focus:ring-accent/20"
               value={rollcode}
               onChange={(e) => setRollcode(e.target.value)}
               autoComplete="username"
             />
           </div>
           <div>
-            <label htmlFor="login-password" className="text-xs text-slate-400">
+            <label htmlFor="login-password" className="text-xs font-medium text-muted">
               Password
             </label>
             <input
@@ -55,17 +55,17 @@ export function LoginPage() {
               name="password"
               type="password"
               aria-label="Password"
-              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-lg border border-line bg-canvas px-3 py-2.5 text-sm text-ink outline-none transition-all duration-150 focus:border-accent focus:ring-2 focus:ring-accent/20"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
             />
           </div>
-          {error ? <p className="text-sm text-amber">{error}</p> : null}
+          {error ? <p className="text-sm text-danger">{error}</p> : null}
           <button
             type="submit"
             disabled={login.isPending}
-            className="w-full rounded-md bg-teal px-3 py-2 text-sm font-medium text-white hover:bg-teal-light disabled:opacity-50"
+            className="w-full rounded-lg bg-accent py-2.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-accent-hover disabled:opacity-50"
           >
             {login.isPending ? "Signing in…" : "Sign in"}
           </button>

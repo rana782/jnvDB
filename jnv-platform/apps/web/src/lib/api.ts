@@ -16,6 +16,10 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export async function apiPatchJson<T>(path: string, body: unknown): Promise<T> {
+  return apiJson<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+}
+
 export async function apiLogin(rollcode: string, password: string) {
   return apiJson<{ user: { rollcode: string; displayName: string | null; roles: string[] } }>(
     "/api/auth/login",

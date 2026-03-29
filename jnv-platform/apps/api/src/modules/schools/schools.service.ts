@@ -10,25 +10,125 @@ import {
   schoolDetailInclude,
   schoolListInclude,
   toSchoolCanonical,
+  toSchoolDetailApiResponse,
   toSchoolListItem,
   type SchoolCanonicalDto,
+  type SchoolDetailApiResponse,
   type SchoolDetailRow,
 } from "./school.dto.js";
+import {
+  computePilotSuitable,
+  computeProfileCompletenessFromSnapshot,
+  type ProfileCompletenessSnapshot,
+} from "../analytics/derived-metrics.js";
+import {
+  getUdisesMatchingDerivedFilters,
+  udiseInChunksWhere,
+} from "./school-list-derived-filters.js";
+
+function rowToCompletenessSnapshot(row: SchoolDetailRow): ProfileCompletenessSnapshot {
+  return {
+    totalStudents: row.totalStudents,
+    totalBoys: row.totalBoys,
+    totalGirls: row.totalGirls,
+    waterAvailable: row.waterAvailable,
+    electricityAvailable: row.electricityAvailable,
+    internetAvailable: row.internetAvailable,
+    solarAvailable: row.solarAvailable,
+    playgroundAvailable: row.playgroundAvailable,
+    libraryAvailable: row.libraryAvailable,
+    enrolmentSocial: row.enrolmentSocial.map((r) => ({
+      total: r.total,
+      boys: r.boys,
+      girls: r.girls,
+    })),
+    enrolmentMinority: row.enrolmentMinority.map((r) => ({
+      total: r.total,
+      boys: r.boys,
+      girls: r.girls,
+    })),
+    enrolmentOthers: row.enrolmentOthers.map((r) => ({
+      total: r.total,
+      boys: r.boys,
+      girls: r.girls,
+    })),
+    enrolmentAge: row.enrolmentAge.map((r) => ({
+      total: r.total,
+      boys: r.boys,
+      girls: r.girls,
+    })),
+    infra: row.infra,
+    digital: row.digital,
+  };
+}
+
+async function persistCompletenessIfChanged(row: SchoolDetailRow): Promise<SchoolDetailRow> {
+  const prisma = getPrisma();
+  const computed = computeProfileCompletenessFromSnapshot(rowToCompletenessSnapshot(row));
+  const stored = row.profileCompletenessPct ?? 0;
+  if (Math.round(computed) === Math.round(stored)) return row;
+  const pilot = computePilotSuitable(row, computed);
+  await prisma.school.update({
+    where: { udise: row.udise },
+    data: { profileCompletenessPct: computed, pilotSuitable: pilot },
+  });
+  return { ...row, profileCompletenessPct: computed, pilotSuitable: pilot };
+}
+
+/** Treat empty query-string values as omitted (avoids NaN from z.coerce). */
+function qNum(min?: number, max?: number) {
+  let inner = z.coerce.number();
+  if (min != null) inner = inner.min(min);
+  if (max != null) inner = inner.max(max);
+  return z.preprocess((v) => {
+    if (v === "" || v == null) return undefined;
+    if (typeof v === "string" && v.trim() === "") return undefined;
+    return v;
+  }, inner.optional());
+}
 
 export const schoolFilterSchema = z.object({
   state: z.string().optional(),
   district: z.string().optional(),
   regionId: z.string().optional(),
-  minStudents: z.coerce.number().optional(),
-  maxStudents: z.coerce.number().optional(),
-  minBoys: z.coerce.number().optional(),
-  minGirls: z.coerce.number().optional(),
+  minStudents: qNum(),
+  maxStudents: qNum(),
+  minBoys: qNum(),
+  maxBoys: qNum(),
+  minGirls: qNum(),
+  maxGirls: qNum(),
+  minCompleteness: qNum(0, 100),
+  maxCompleteness: qNum(0, 100),
+  minScRatioPct: qNum(0, 100),
+  maxScRatioPct: qNum(0, 100),
+  minStRatioPct: qNum(0, 100),
+  maxStRatioPct: qNum(0, 100),
+  minObcRatioPct: qNum(0, 100),
+  maxObcRatioPct: qNum(0, 100),
+  ageBand: z.preprocess(
+    (v) => (v === "" || v == null ? undefined : String(v)),
+    z.string().max(16).regex(/^(?:Total|\d{1,2})$/).optional(),
+  ),
+  minAgeSharePct: qNum(0, 100),
+  maxAgeSharePct: qNum(0, 100),
+  minGirlsSharePct: qNum(0, 100),
+  maxGirlsSharePct: qNum(0, 100),
   water: z.enum(["yes", "no"]).optional(),
   electricity: z.enum(["yes", "no"]).optional(),
   internet: z.enum(["yes", "no"]).optional(),
   parsingStatus: z.string().optional(),
   pipelineStatus: z.string().optional(),
-});
+})
+  .superRefine((f, ctx) => {
+    const ageBounds = f.minAgeSharePct != null || f.maxAgeSharePct != null;
+    if (ageBounds && !f.ageBand) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "ageBand is required when minAgeSharePct or maxAgeSharePct is set",
+        path: ["ageBand"],
+      });
+    }
+  });
 
 export type SchoolFilters = z.infer<typeof schoolFilterSchema>;
 
@@ -44,6 +144,31 @@ export async function listSchools(pagination: PaginationQuery, filters: SchoolFi
   const prisma = getPrisma();
   const { take, skip } = offsetLimit(pagination);
   const and: Prisma.SchoolWhereInput[] = [];
+
+  const derivedUdises = await getUdisesMatchingDerivedFilters(prisma, {
+    minScRatioPct: filters.minScRatioPct,
+    maxScRatioPct: filters.maxScRatioPct,
+    minStRatioPct: filters.minStRatioPct,
+    maxStRatioPct: filters.maxStRatioPct,
+    minObcRatioPct: filters.minObcRatioPct,
+    maxObcRatioPct: filters.maxObcRatioPct,
+    ageBand: filters.ageBand,
+    minAgeSharePct: filters.minAgeSharePct,
+    maxAgeSharePct: filters.maxAgeSharePct,
+    minGirlsSharePct: filters.minGirlsSharePct,
+    maxGirlsSharePct: filters.maxGirlsSharePct,
+  });
+  if (derivedUdises !== null && derivedUdises.length === 0) {
+    return {
+      items: [],
+      total: 0,
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+    };
+  }
+  if (derivedUdises !== null) {
+    and.push(udiseInChunksWhere(derivedUdises));
+  }
 
   if (filters.state) {
     // SQLite: no case-insensitive mode; pass lower-case queries or use Postgres in production.
@@ -69,7 +194,16 @@ export async function listSchools(pagination: PaginationQuery, filters: SchoolFi
     });
   }
   if (filters.minBoys != null) and.push({ totalBoys: { gte: filters.minBoys } });
+  if (filters.maxBoys != null) and.push({ totalBoys: { lte: filters.maxBoys } });
   if (filters.minGirls != null) and.push({ totalGirls: { gte: filters.minGirls } });
+  if (filters.maxGirls != null) and.push({ totalGirls: { lte: filters.maxGirls } });
+
+  if (filters.minCompleteness != null) {
+    and.push({ profileCompletenessPct: { gte: filters.minCompleteness } });
+  }
+  if (filters.maxCompleteness != null) {
+    and.push({ profileCompletenessPct: { lte: filters.maxCompleteness } });
+  }
 
   const w = boolFilter(filters.water as "yes" | "no" | undefined);
   if (w !== undefined) and.push({ waterAvailable: w });
@@ -124,12 +258,17 @@ export async function getSchoolDetailRow(udiseRaw: string): Promise<SchoolDetail
     include: schoolDetailInclude,
   });
   if (!school) throw new AppError("NOT_FOUND", `School ${udise} not found`, 404);
-  return school;
+  return persistCompletenessIfChanged(school);
 }
 
-/** Canonical DTO for API responses (detail, compare, mutations). */
+/** Canonical DTO for API responses (compare, PATCH responses, charts). */
 export async function getSchoolCanonical(udiseRaw: string): Promise<SchoolCanonicalDto> {
   return toSchoolCanonical(await getSchoolDetailRow(udiseRaw));
+}
+
+/** GET /api/schools/:udise — DB-backed detail envelope (no PDF re-parse). */
+export async function getSchoolDetailApi(udiseRaw: string): Promise<SchoolDetailApiResponse> {
+  return toSchoolDetailApiResponse(await getSchoolDetailRow(udiseRaw));
 }
 
 export async function compareSchoolsCanonical(udisesRaw: string[]): Promise<{ schools: SchoolCanonicalDto[] }> {
@@ -142,7 +281,8 @@ export async function compareSchoolsCanonical(udisesRaw: string[]): Promise<{ sc
     where: { udise: { in: uniq } },
     include: schoolDetailInclude,
   });
-  const map = new Map(rows.map((r) => [r.udise, r]));
+  const refreshed = await Promise.all(rows.map((r) => persistCompletenessIfChanged(r)));
+  const map = new Map(refreshed.map((r) => [r.udise, r]));
   const schools: SchoolCanonicalDto[] = [];
   for (const u of uniq) {
     const row = map.get(u);
@@ -154,27 +294,28 @@ export async function compareSchoolsCanonical(udisesRaw: string[]): Promise<{ sc
 
 export async function patchSchoolStatus(
   udiseRaw: string,
-  body: { pipelineStatus?: string },
+  body: { pipelineStatus: string },
   actorId: string,
 ) {
   const prisma = getPrisma();
   const udise = normalizeUdise(udiseRaw);
   const prev = await prisma.school.findUnique({ where: { udise } });
   if (!prev) throw new AppError("NOT_FOUND", "School not found", 404);
-  if (body.pipelineStatus) {
-    await prisma.school.update({
-      where: { udise },
-      data: { pipelineStatus: body.pipelineStatus as never },
-    });
-    await prisma.schoolProgress.create({
-      data: {
-        udise,
-        fromStatus: prev.pipelineStatus,
-        toStatus: body.pipelineStatus as never,
-        userId: actorId,
-      },
-    });
+  if (prev.pipelineStatus === body.pipelineStatus) {
+    return getSchoolCanonical(udise);
   }
+  await prisma.school.update({
+    where: { udise },
+    data: { pipelineStatus: body.pipelineStatus as never },
+  });
+  await prisma.schoolProgress.create({
+    data: {
+      udise,
+      fromStatus: prev.pipelineStatus,
+      toStatus: body.pipelineStatus as never,
+      userId: actorId,
+    },
+  });
   return getSchoolCanonical(udise);
 }
 
@@ -230,6 +371,7 @@ export async function upsertNote(
 
 export async function postRevenueCalculate(body: {
   udise: string;
+  adoptionRate?: number;
   occupancyRate?: number;
   pricePerWash?: number;
   washesPerStudentPerMonth?: number;
@@ -238,11 +380,16 @@ export async function postRevenueCalculate(body: {
   const head =
     school.totalStudents ??
     (school.totalBoys ?? 0) + (school.totalGirls ?? 0);
+  const adoption =
+    body.adoptionRate ??
+    body.occupancyRate ??
+    school.manualRevenueOccupancy ??
+    0.85;
   return calculateRevenue({
     totalStudents: head,
     boys: school.totalBoys ?? undefined,
     girls: school.totalGirls ?? undefined,
-    occupancyRate: body.occupancyRate ?? school.manualRevenueOccupancy ?? 0.85,
+    adoptionRate: adoption,
     pricePerWash: body.pricePerWash ?? school.manualWashPrice ?? 30,
     washesPerStudentPerMonth:
       body.washesPerStudentPerMonth ?? school.manualWashesPerStudentMonth ?? 4,

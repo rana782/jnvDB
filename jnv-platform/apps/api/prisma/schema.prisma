@@ -8,6 +8,45 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// =============================================================================
+// Data layers (660+ schools; optimize reads without duplicating PDF truth)
+// -----------------------------------------------------------------------------
+// 1) Raw / provenance     — SchoolReportCardSnapshot, SchoolExtractionRaw, SchoolProfile.rawJson
+// 2) Normalized query row — School (+ 1:1 SchoolInfra, SchoolDigitalFacilities, …)
+// 3) Derived scalars      — profileCompletenessPct, pilotSuitable (recomputed from snapshot)
+// 4) Rollup tables        — MapStateAggregate / MapDistrictAggregate (full-portfolio map; refresh on import)
+// =============================================================================
+
+// --- Map rollups (unfiltered aggregates; refreshed after import / lazy-filled) ---
+
+model MapStateAggregate {
+  stateName      String   @id
+  schoolCount    Int
+  studentSum     Int
+  districtCount  Int
+  readinessSum   Float    @default(0)
+  readinessN     Int      @default(0)
+  completedCount Int
+  regionName     String   @default("Unassigned")
+  updatedAt      DateTime @updatedAt
+
+  @@index([regionName])
+}
+
+model MapDistrictAggregate {
+  stateName      String
+  districtName   String
+  schoolCount    Int
+  studentSum     Int
+  readinessSum   Float    @default(0)
+  readinessN     Int      @default(0)
+  completedCount Int
+  updatedAt      DateTime @updatedAt
+
+  @@id([stateName, districtName])
+  @@index([stateName])
+}
+
 // --- Reference geography & NVS regions ---
 
 model RegionOffice {
@@ -101,7 +140,7 @@ enum ReviewStatus {
 }
 
 enum CompletionPipelineStatus {
-  UNREVIEWED
+  NOT_REVIEWED
   REVIEWED
   CONTACTED
   PILOT_READY
@@ -110,6 +149,7 @@ enum CompletionPipelineStatus {
 }
 
 model School {
+  /// Stable business key and FK target for all child tables (not a surrogate UUID).
   udise String @id
 
   schoolName           String
@@ -170,8 +210,10 @@ model School {
 
   parsingStatus    ParsingStatus @default(PENDING)
   reviewStatus     ReviewStatus  @default(UNREVIEWED)
-  pipelineStatus   CompletionPipelineStatus @default(UNREVIEWED)
+  pipelineStatus   CompletionPipelineStatus @default(NOT_REVIEWED)
+  /// Derived 0–100 completeness from snapshot (see analytics/derived-metrics); indexed for list filters.
   profileCompletenessPct Float?   @default(0)
+  /// Derived pilot fit from completeness + facilities (not raw PDF text).
   pilotSuitable        Boolean? @default(false)
 
   manualRevenueOccupancy   Float?
@@ -200,9 +242,17 @@ model School {
   @@index([districtId])
   @@index([geographicState])
   @@index([geographicDistrict])
+  /// Map drill + schools list by geo + default `orderBy: updatedAt`.
+  @@index([geographicState, geographicDistrict, updatedAt])
+  @@index([geographicState, geographicDistrict])
+  @@index([parsingStatus, geographicState])
   @@index([parsingStatus])
   @@index([pipelineStatus])
+  /// Pipeline views sorted by recent activity.
+  @@index([pipelineStatus, updatedAt])
   @@index([totalStudents])
+  /// High-readiness / dashboard bucket filters.
+  @@index([profileCompletenessPct])
   @@index([updatedAt])
 }
 
@@ -227,6 +277,7 @@ model SchoolProfile {
   updatedAt DateTime @updatedAt
 }
 
+/// Normalized facility block (query/joins); booleans on School are denormalized hot path for filters.
 model SchoolInfra {
   udise              String  @id
   school             School  @relation(fields: [udise], references: [udise], onDelete: Cascade)
@@ -318,6 +369,7 @@ model SchoolEnrolmentAge {
   createdAt DateTime @default(now())
 
   @@index([udise])
+  @@index([udise, ageBand])
 }
 
 enum RevenueScenarioKind {
@@ -404,7 +456,7 @@ model SchoolExtractionRaw {
   @@index([udise])
 }
 
-// --- Import & audit ---
+// --- Import & audit (single job model; tracks batch PDF runs) ---
 
 enum ImportJobStatus {
   PENDING

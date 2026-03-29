@@ -9,11 +9,26 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(16).default("dev-jwt-secret-change-me-32chars"),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   COOKIE_SECURE: z.coerce.boolean().default(false),
+  /** When true, merge UDISE / school profile / students from the legacy full parser; social buckets always use the dedicated extractor. */
+  REPORT_CARD_LEGACY_FULL_PARSE: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === false || v === "") return false;
+      if (v === true) return true;
+      const t = String(v).trim().toLowerCase();
+      return t === "true" || t === "1" || t === "yes";
+    }),
 });
 
 export type Env = z.infer<typeof envSchema>;
 
 let cached: Env | null = null;
+
+/** Test-only: allow switching DATABASE_URL after first load. */
+export function clearEnvCacheForTests(): void {
+  cached = null;
+}
 
 export function loadEnv(): Env {
   if (cached) return cached;

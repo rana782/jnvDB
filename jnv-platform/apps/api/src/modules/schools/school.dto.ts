@@ -47,6 +47,7 @@ export type SchoolListItemDto = {
   totalStudents: number | null;
   totalBoys: number | null;
   totalGirls: number | null;
+  profileCompletenessPct: number | null;
   pipelineStatus: string;
   parsingStatus: string;
   regionCode: string | null;
@@ -136,6 +137,90 @@ export type SchoolCanonicalDto = {
   };
 };
 
+/** Numeric total for bar charts: `total` when set, otherwise boys + girls (never null — use 0). */
+function chartValueFromRow(
+  total: number | null | undefined,
+  boys: number | null | undefined,
+  girls: number | null | undefined,
+): number {
+  if (typeof total === "number" && Number.isFinite(total)) return total;
+  const b = typeof boys === "number" && Number.isFinite(boys) ? boys : 0;
+  const g = typeof girls === "number" && Number.isFinite(girls) ? girls : 0;
+  return b + g;
+}
+
+/** Category-based enrolment rows formatted for charts (DB → API). */
+export type EnrolmentCategoryChartDto = {
+  category: string;
+  boys: number | null;
+  girls: number | null;
+  total: number | null;
+  chartValue: number;
+};
+
+export type EnrolmentAgeChartDto = {
+  ageBand: string;
+  boys: number | null;
+  girls: number | null;
+  total: number | null;
+  chartValue: number;
+};
+
+function toCategoryChartRows(
+  rows: { category: string; boys: number | null; girls: number | null; total: number | null }[],
+): EnrolmentCategoryChartDto[] {
+  const list = Array.isArray(rows) ? rows : [];
+  return list.map((r) => ({
+    category: r.category ?? "",
+    boys: r.boys ?? null,
+    girls: r.girls ?? null,
+    total: r.total ?? null,
+    chartValue: chartValueFromRow(r.total, r.boys, r.girls),
+  }));
+}
+
+function toAgeChartRows(
+  rows: { ageBand: string; boys: number | null; girls: number | null; total: number | null }[],
+): EnrolmentAgeChartDto[] {
+  const list = Array.isArray(rows) ? rows : [];
+  const mapped = list.map((r) => ({
+    ageBand: r.ageBand ?? "",
+    boys: r.boys ?? null,
+    girls: r.girls ?? null,
+    total: r.total ?? null,
+    chartValue: chartValueFromRow(r.total, r.boys, r.girls),
+  }));
+  return mapped.sort((a, b) => {
+    if (a.ageBand === "Total") return 1;
+    if (b.ageBand === "Total") return -1;
+    return (parseInt(a.ageBand, 10) || 0) - (parseInt(b.ageBand, 10) || 0);
+  });
+}
+
+/**
+ * `school` mirrors canonical detail but omits enrolment breakdowns provided at the top level.
+ */
+export type SchoolDetailApiSchoolDto = Omit<SchoolCanonicalDto, "sections" | "chartSeries"> & {
+  sections: Omit<
+    SchoolCanonicalDto["sections"],
+    "enrolmentSocial" | "enrolmentMinority" | "enrolmentOthers" | "enrolmentAge"
+  >;
+  chartSeries: Omit<
+    SchoolCanonicalDto["chartSeries"],
+    "enrolmentSocial" | "enrolmentMinority" | "enrolmentOthers" | "enrolmentAge"
+  >;
+};
+
+export type SchoolDetailApiResponse = {
+  school: SchoolDetailApiSchoolDto;
+  enrolmentSocial: EnrolmentCategoryChartDto[];
+  enrolmentMinority: EnrolmentCategoryChartDto[];
+  enrolmentOthers: EnrolmentCategoryChartDto[];
+  enrolmentAge: EnrolmentAgeChartDto[];
+  extractionConfidence: number | null;
+  pdfPath: string | null;
+};
+
 function baseProvenance(s: SchoolDetailRow | SchoolListRow): SchoolProvenanceDto {
   return {
     academicYear: s.academicYear ?? null,
@@ -158,6 +243,7 @@ export function toSchoolListItem(s: SchoolListRow): SchoolListItemDto {
     totalStudents: s.totalStudents ?? null,
     totalBoys: s.totalBoys ?? null,
     totalGirls: s.totalGirls ?? null,
+    profileCompletenessPct: s.profileCompletenessPct ?? null,
     pipelineStatus: s.pipelineStatus,
     parsingStatus: s.parsingStatus,
     regionCode: s.state?.region?.code ?? null,
@@ -268,5 +354,33 @@ export function toSchoolCanonical(s: SchoolDetailRow): SchoolCanonicalDto {
       manualWashPrice: s.manualWashPrice ?? null,
       manualWashesPerStudentMonth: s.manualWashesPerStudentMonth ?? null,
     },
+  };
+}
+
+/** GET /api/schools/:udise — all fields from DB via `getSchoolDetailRow`; no re-parsing. */
+export function toSchoolDetailApiResponse(s: SchoolDetailRow): SchoolDetailApiResponse {
+  const canonical = toSchoolCanonical(s);
+  const {
+    enrolmentSocial: _cSoc,
+    enrolmentMinority: _cMin,
+    enrolmentOthers: _cOth,
+    enrolmentAge: _cAge,
+    ...chartSeries
+  } = canonical.chartSeries;
+  const {
+    enrolmentSocial: _sSoc,
+    enrolmentMinority: _sMin,
+    enrolmentOthers: _sOth,
+    enrolmentAge: _sAge,
+    ...sections
+  } = canonical.sections;
+  return {
+    school: { ...canonical, sections, chartSeries },
+    enrolmentSocial: toCategoryChartRows(s.enrolmentSocial),
+    enrolmentMinority: toCategoryChartRows(s.enrolmentMinority),
+    enrolmentOthers: toCategoryChartRows(s.enrolmentOthers),
+    enrolmentAge: toAgeChartRows(s.enrolmentAge),
+    extractionConfidence: s.overallExtractionConfidence ?? null,
+    pdfPath: s.pdfRelativePath ?? null,
   };
 }

@@ -17,6 +17,21 @@ const REGION_DEFS = [
 const ROLE_NAMES = ["super_admin", "founder", "analyst", "viewer"] as const;
 
 async function main() {
+  // One-time data fix: pipeline enum value renamed UNREVIEWED → NOT_REVIEWED (SQLite stores enum as TEXT).
+  try {
+    await prisma.$executeRawUnsafe(
+      `UPDATE School SET pipelineStatus = 'NOT_REVIEWED' WHERE pipelineStatus = 'UNREVIEWED'`,
+    );
+    await prisma.$executeRawUnsafe(
+      `UPDATE SchoolProgress SET fromStatus = 'NOT_REVIEWED' WHERE fromStatus = 'UNREVIEWED'`,
+    );
+    await prisma.$executeRawUnsafe(
+      `UPDATE SchoolProgress SET toStatus = 'NOT_REVIEWED' WHERE toStatus = 'UNREVIEWED'`,
+    );
+  } catch (e) {
+    console.warn("Pipeline enum migration SQL skipped or failed (ok on fresh DB):", e);
+  }
+
   for (const r of REGION_DEFS) {
     await prisma.regionOffice.upsert({
       where: { code: r.code },

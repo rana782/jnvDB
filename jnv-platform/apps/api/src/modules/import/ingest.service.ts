@@ -5,14 +5,22 @@ import type { ScrapedDataPaths } from "../../config/paths.js";
 import { toRepoRelative } from "../../config/paths.js";
 import { getPrisma } from "../../shared/prisma.js";
 import { normalizeUdise } from "../../shared/udise.js";
-import { extractPdfText, parseReportCardText } from "./pdf-extract.js";
+import { extractPdfText, parseReportCardText, reportCardExtractionMeta } from "./pdf-extract.js";
+import type { ReportCardNormalized } from "./report-card-normalized.js";
+import {
+  ENROLMENT_AGE_BAND,
+  ENROLMENT_MINORITY_CATEGORY,
+  ENROLMENT_OTHERS_CATEGORY,
+} from "./report-card-normalized.js";
 import {
   computePilotSuitable,
-  computeProfileCompleteness,
+  computeProfileCompletenessFromSnapshot,
+  type ProfileCompletenessSnapshot,
 } from "../analytics/derived-metrics.js";
 import { calculateRevenue, scenarioPresets } from "../analytics/revenue-calculator.js";
 import { logger } from "../../shared/logger.js";
 import type { ImportJobStatus, Prisma } from "@prisma/client";
+import { refreshMapAggregates } from "../map/map-rollup.service.js";
 
 export type SchoolsJsonRow = {
   udise_code: string;
@@ -38,6 +46,212 @@ function yn(s: string | undefined): boolean | undefined {
   if (t === "yes" || t === "1" || t === "true") return true;
   if (t === "no" || t === "0" || t === "false") return false;
   return undefined;
+}
+
+/** Rows for `createMany` — one row per category with a non-null total (no duplicates). */
+function buildEnrolmentSocialCreateManyData(
+  udise: string,
+  social: ReportCardNormalized["enrolmentSocial"],
+): Prisma.SchoolEnrolmentSocialCreateManyInput[] {
+  const pairs: [string, number | null][] = [
+    ["SC", social.sc],
+    ["ST", social.st],
+    ["OBC", social.obc],
+    ["General", social.general],
+    ["Total", social.total],
+  ];
+  return pairs
+    .filter(([, total]) => total != null)
+    .map(([category, total]) => ({
+      udise,
+      category,
+      total: total as number,
+      boys: null,
+      girls: null,
+    }));
+}
+
+function buildEnrolmentMinorityCreateManyData(
+  udise: string,
+  section: ReportCardNormalized["enrolmentMinority"],
+): Prisma.SchoolEnrolmentMinorityCreateManyInput[] {
+  const rows: Prisma.SchoolEnrolmentMinorityCreateManyInput[] = [];
+  for (const key of Object.keys(ENROLMENT_MINORITY_CATEGORY) as (keyof typeof ENROLMENT_MINORITY_CATEGORY)[]) {
+    const total = section[key];
+    if (total != null) {
+      rows.push({
+        udise,
+        category: ENROLMENT_MINORITY_CATEGORY[key],
+        total,
+        boys: null,
+        girls: null,
+      });
+    }
+  }
+  return rows;
+}
+
+function buildEnrolmentOthersCreateManyData(
+  udise: string,
+  section: ReportCardNormalized["enrolmentOthers"],
+): Prisma.SchoolEnrolmentOthersCreateManyInput[] {
+  const rows: Prisma.SchoolEnrolmentOthersCreateManyInput[] = [];
+  for (const key of Object.keys(ENROLMENT_OTHERS_CATEGORY) as (keyof typeof ENROLMENT_OTHERS_CATEGORY)[]) {
+    const total = section[key];
+    if (total != null) {
+      rows.push({
+        udise,
+        category: ENROLMENT_OTHERS_CATEGORY[key],
+        total,
+        boys: null,
+        girls: null,
+      });
+    }
+  }
+  return rows;
+}
+
+function buildEnrolmentAgeCreateManyData(
+  udise: string,
+  section: ReportCardNormalized["enrolmentAge"],
+): Prisma.SchoolEnrolmentAgeCreateManyInput[] {
+  const rows: Prisma.SchoolEnrolmentAgeCreateManyInput[] = [];
+  for (const key of Object.keys(ENROLMENT_AGE_BAND) as (keyof typeof ENROLMENT_AGE_BAND)[]) {
+    const total = section[key];
+    if (total != null) {
+      rows.push({
+        udise,
+        ageBand: ENROLMENT_AGE_BAND[key],
+        total,
+        boys: null,
+        girls: null,
+      });
+    }
+  }
+  return rows;
+}
+
+const REPORT_CARD_TEACHER_CATEGORY = "report_card";
+
+type SchoolFacilityScalarPatch = Partial<{
+  electricityAvailable: boolean | null;
+  waterAvailable: boolean | null;
+  internetAvailable: boolean | null;
+  solarAvailable: boolean | null;
+  playgroundAvailable: boolean | null;
+  libraryAvailable: boolean | null;
+}>;
+
+/**
+ * Map parsed infra → `School` facility booleans (filters, pilot suitability, deployment readiness).
+ * Only keys with non-null parsed values are set so we do not erase prior data for missing slots.
+ */
+function schoolFacilityScalarsFromInfra(infra: ReportCardNormalized["infra"]): SchoolFacilityScalarPatch {
+  const o: SchoolFacilityScalarPatch = {};
+  if (infra.electricity !== null) o.electricityAvailable = infra.electricity;
+  if (infra.water !== null) o.waterAvailable = infra.water;
+  if (infra.internet !== null) o.internetAvailable = infra.internet;
+  if (infra.solar !== null) o.solarAvailable = infra.solar;
+  if (infra.playground !== null) o.playgroundAvailable = infra.playground;
+  if (infra.library !== null) o.libraryAvailable = infra.library;
+  return o;
+}
+
+function buildSchoolInfraCreateData(
+  udise: string,
+  infra: ReportCardNormalized["infra"],
+): Prisma.SchoolInfraUncheckedCreateInput {
+  return {
+    udise,
+    extra: {
+      source: "report_card_pdf",
+      availability: {
+        electricity: infra.electricity,
+        water: infra.water,
+        internet: infra.internet,
+        solar: infra.solar,
+        playground: infra.playground,
+        library: infra.library,
+      },
+    } as Prisma.InputJsonValue,
+  };
+}
+
+function buildSchoolDigitalCreateData(
+  udise: string,
+  digital: ReportCardNormalized["digital"],
+): Prisma.SchoolDigitalFacilitiesUncheckedCreateInput {
+  return {
+    udise,
+    desktops: digital.desktops,
+    laptops: digital.laptops,
+    tablets: digital.tablets,
+    printers: digital.printers,
+    smartClassTv: null,
+    ...(digital.projectors != null
+      ? { extra: { projectors: digital.projectors } as Prisma.InputJsonValue }
+      : {}),
+  };
+}
+
+function buildTeacherBreakdownCreateManyData(
+  udise: string,
+  teachers: ReportCardNormalized["teachers"],
+): Prisma.SchoolTeacherBreakdownCreateManyInput[] {
+  const pairs: [string, number | null][] = [
+    ["Total", teachers.total],
+    ["Male", teachers.male],
+    ["Female", teachers.female],
+    ["Trained", teachers.trained],
+    ["Untrained", teachers.untrained],
+  ];
+  return pairs
+    .filter(([, count]) => count != null)
+    .map(([label, count]) => ({
+      udise,
+      category: REPORT_CARD_TEACHER_CATEGORY,
+      label,
+      count: count as number,
+    }));
+}
+
+function buildRevenueScenarioRows(
+  udise: string,
+  revBase: { totalStudents: number; boys?: number; girls?: number },
+): Prisma.SchoolRevenueScenarioCreateManyInput[] {
+  const rows: Prisma.SchoolRevenueScenarioCreateManyInput[] = [];
+  for (const kind of ["LOW", "MEDIUM", "HIGH"] as const) {
+    const r = scenarioPresets(kind, revBase);
+    rows.push({
+      udise,
+      kind,
+      label: kind,
+      inputs: revBase as object,
+      monthlyRevenue: r.monthlyRevenue,
+      annualRevenue: r.annualRevenue,
+      revenueBoys: r.revenueBoys,
+      revenueGirls: r.revenueGirls,
+      revenueTotal: r.revenueTotal,
+    });
+  }
+  const custom = calculateRevenue({
+    ...revBase,
+    pricePerWash: 30,
+    adoptionRate: 0.85,
+    washesPerStudentPerMonth: 4,
+  });
+  rows.push({
+    udise,
+    kind: "CUSTOM",
+    label: "default",
+    inputs: { pricePerWash: 30, adoptionRate: 0.85, washesPerStudentPerMonth: 4 } as object,
+    monthlyRevenue: custom.monthlyRevenue,
+    annualRevenue: custom.annualRevenue,
+    revenueBoys: custom.revenueBoys,
+    revenueGirls: custom.revenueGirls,
+    revenueTotal: custom.revenueTotal,
+  });
+  return rows;
 }
 
 async function sha256File(filePath: string): Promise<string> {
@@ -259,181 +473,248 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
 
       try {
         const extracted = await extractPdfText(buffer);
-        const parsed = parseReportCardText(extracted.text, udise);
+        const normalized = parseReportCardText(extracted.text, udise);
+        const meta = reportCardExtractionMeta(normalized, extracted.text, udise);
         const pdfRel = toRepoRelative(fullPath, repoRoot);
 
-        const mergedName = parsed.schoolName || existing?.schoolName || `JNV ${udise}`;
-        const geoState = parsed.state || existing?.geographicState;
-        const geoDist = parsed.district || existing?.geographicDistrict;
+        const sp = normalized.schoolProfile;
+        const mergedName =
+          (sp?.name?.trim() ? sp.name.trim() : undefined) || existing?.schoolName || `JNV ${udise}`;
+        const geoState =
+          (sp?.state?.trim() ? sp.state.trim() : undefined) || existing?.geographicState || null;
+        const geoDist =
+          (sp?.district?.trim() ? sp.district.trim() : undefined) || existing?.geographicDistrict || null;
 
-        const updateData: Prisma.SchoolUpdateInput = {
-          schoolName: mergedName,
-          geographicState: geoState ?? undefined,
-          geographicDistrict: geoDist ?? undefined,
-          blockName: parsed.block ?? undefined,
-          pincode: parsed.pincode ?? undefined,
-          totalStudents: parsed.totalStudents ?? undefined,
-          totalBoys: parsed.totalBoys ?? undefined,
-          totalGirls: parsed.totalGirls ?? undefined,
-          totalTeachers: parsed.totalTeachers ?? undefined,
-          waterAvailable: parsed.water ?? undefined,
-          electricityAvailable: parsed.electricity ?? undefined,
-          internetAvailable: parsed.internet ?? undefined,
-          solarAvailable: parsed.solar ?? undefined,
-          playgroundAvailable: parsed.playground ?? undefined,
-          libraryAvailable: parsed.library ?? undefined,
-          sourcePdfHash: hash,
-          pdfRelativePath: pdfRel,
-          extractorVersion: "1.0.0",
-          parsingStatus: parsed.confidence >= 0.65 ? "COMPLETE" : "PARTIAL",
-          academicYear: parsed.academicYear ?? undefined,
-          lastPdfExtractedAt: new Date(),
-          overallExtractionConfidence: parsed.confidence,
-          importLastError: null,
-        };
-
-        const school = await prisma.school.upsert({
-          where: { udise },
-          create: {
-            udise,
-            schoolName: mergedName,
-            geographicState: geoState,
-            geographicDistrict: geoDist,
-            blockName: parsed.block ?? null,
-            pincode: parsed.pincode ?? null,
-            totalStudents: parsed.totalStudents ?? null,
-            totalBoys: parsed.totalBoys ?? null,
-            totalGirls: parsed.totalGirls ?? null,
-            totalTeachers: parsed.totalTeachers ?? null,
-            waterAvailable: parsed.water ?? null,
-            electricityAvailable: parsed.electricity ?? null,
-            internetAvailable: parsed.internet ?? null,
-            solarAvailable: parsed.solar ?? null,
-            playgroundAvailable: parsed.playground ?? null,
-            libraryAvailable: parsed.library ?? null,
-            sourcePdfHash: hash,
-            pdfRelativePath: pdfRel,
-            extractorVersion: "1.0.0",
-            parsingStatus: parsed.confidence >= 0.65 ? "COMPLETE" : "PARTIAL",
-            academicYear: parsed.academicYear ?? null,
-            lastPdfExtractedAt: new Date(),
-            overallExtractionConfidence: parsed.confidence,
-            importLastError: null,
-          },
-          update: updateData,
-        });
+        const st = normalized.students;
+        const totalStudents = st?.total ?? undefined;
+        const totalBoys = st?.boys ?? undefined;
+        const totalGirls = st?.girls ?? undefined;
 
         const extractionPayload = {
           udise,
           sourcePdfHash: hash,
           pdfRelativePath: pdfRel,
-          academicYear: parsed.academicYear ?? null,
-          parsed,
+          normalized,
+          meta,
           extraction: {
             charCount: extracted.charCount,
             pages: extracted.pages,
             usedOcr: extracted.usedOcr,
           },
-          confidence: parsed.confidence,
-          warnings: parsed.warnings,
           importedAt: new Date().toISOString(),
         };
+
+        const infraFacilityPatch =
+          normalized.infra !== undefined ? schoolFacilityScalarsFromInfra(normalized.infra) : {};
+        const totalTeachersPatch =
+          normalized.teachers?.total != null ? { totalTeachers: normalized.teachers.total } : {};
+
+        await prisma.$transaction(
+          async (tx) => {
+            const school = await tx.school.upsert({
+              where: { udise },
+              create: {
+                udise,
+                schoolName: mergedName,
+                geographicState: geoState,
+                geographicDistrict: geoDist,
+                totalStudents: totalStudents ?? null,
+                totalBoys: totalBoys ?? null,
+                totalGirls: totalGirls ?? null,
+                sourcePdfHash: hash,
+                pdfRelativePath: pdfRel,
+                extractorVersion: "1.0.0",
+                parsingStatus: meta.confidence >= 0.65 ? "COMPLETE" : "PARTIAL",
+                lastPdfExtractedAt: new Date(),
+                overallExtractionConfidence: meta.confidence,
+                importLastError: null,
+                ...infraFacilityPatch,
+                ...totalTeachersPatch,
+              },
+              update: {
+                schoolName: mergedName,
+                geographicState: geoState ?? undefined,
+                geographicDistrict: geoDist ?? undefined,
+                totalStudents: totalStudents ?? undefined,
+                totalBoys: totalBoys ?? undefined,
+                totalGirls: totalGirls ?? undefined,
+                sourcePdfHash: hash,
+                pdfRelativePath: pdfRel,
+                extractorVersion: "1.0.0",
+                parsingStatus: meta.confidence >= 0.65 ? "COMPLETE" : "PARTIAL",
+                lastPdfExtractedAt: new Date(),
+                overallExtractionConfidence: meta.confidence,
+                importLastError: null,
+                ...infraFacilityPatch,
+                ...totalTeachersPatch,
+              },
+            });
+
+            await tx.schoolEnrolmentSocial.deleteMany({ where: { udise } });
+            if (normalized.enrolmentSocial) {
+              const socialRows = buildEnrolmentSocialCreateManyData(udise, normalized.enrolmentSocial);
+              if (socialRows.length > 0) {
+                await tx.schoolEnrolmentSocial.createMany({ data: socialRows });
+              }
+            }
+
+            if (normalized.enrolmentMinority !== undefined) {
+              await tx.schoolEnrolmentMinority.deleteMany({ where: { udise } });
+              const minorityRows = buildEnrolmentMinorityCreateManyData(udise, normalized.enrolmentMinority);
+              if (minorityRows.length > 0) {
+                await tx.schoolEnrolmentMinority.createMany({ data: minorityRows });
+              }
+            }
+
+            if (normalized.enrolmentOthers !== undefined) {
+              await tx.schoolEnrolmentOthers.deleteMany({ where: { udise } });
+              const othersRows = buildEnrolmentOthersCreateManyData(udise, normalized.enrolmentOthers);
+              if (othersRows.length > 0) {
+                await tx.schoolEnrolmentOthers.createMany({ data: othersRows });
+              }
+            }
+
+            if (normalized.enrolmentAge !== undefined) {
+              await tx.schoolEnrolmentAge.deleteMany({ where: { udise } });
+              const ageRows = buildEnrolmentAgeCreateManyData(udise, normalized.enrolmentAge);
+              if (ageRows.length > 0) {
+                await tx.schoolEnrolmentAge.createMany({ data: ageRows });
+              }
+            }
+
+            if (normalized.infra !== undefined) {
+              await tx.schoolInfra.deleteMany({ where: { udise } });
+              await tx.schoolInfra.create({
+                data: buildSchoolInfraCreateData(udise, normalized.infra),
+              });
+            }
+
+            if (normalized.digital !== undefined) {
+              await tx.schoolDigitalFacilities.deleteMany({ where: { udise } });
+              await tx.schoolDigitalFacilities.create({
+                data: buildSchoolDigitalCreateData(udise, normalized.digital),
+              });
+            }
+
+            if (normalized.teachers !== undefined) {
+              await tx.schoolTeacherBreakdown.deleteMany({ where: { udise } });
+              const teacherRows = buildTeacherBreakdownCreateManyData(udise, normalized.teachers);
+              if (teacherRows.length > 0) {
+                await tx.schoolTeacherBreakdown.createMany({ data: teacherRows });
+              }
+            }
+
+            await tx.schoolReportCardSnapshot.upsert({
+              where: { udise },
+              create: {
+                udise,
+                academicYear: null,
+                sourcePdfHash: hash,
+                pdfRelativePath: pdfRel,
+                screenshotRelativePath: school.screenshotRelativePath ?? null,
+                payload: extractionPayload as object,
+                overallConfidence: meta.confidence,
+              },
+              update: {
+                sourcePdfHash: hash,
+                pdfRelativePath: pdfRel,
+                screenshotRelativePath: school.screenshotRelativePath ?? undefined,
+                payload: extractionPayload as object,
+                overallConfidence: meta.confidence,
+                extractedAt: new Date(),
+              },
+            });
+
+            await tx.schoolExtractionRaw.create({
+              data: {
+                udise,
+                sectionKey: "full_text",
+                rawText: extracted.text.slice(0, 500_000),
+                payload: { normalized, meta } as object,
+                confidence: meta.confidence,
+                extractorVersion: "1.0.0",
+                warnings: meta.warnings,
+              },
+            });
+
+            const refreshed = await tx.school.findUnique({
+              where: { udise },
+              include: {
+                enrolmentSocial: true,
+                enrolmentMinority: true,
+                enrolmentOthers: true,
+                enrolmentAge: true,
+                infra: true,
+                digital: true,
+              },
+            });
+            if (refreshed) {
+              const snap: ProfileCompletenessSnapshot = {
+                totalStudents: refreshed.totalStudents,
+                totalBoys: refreshed.totalBoys,
+                totalGirls: refreshed.totalGirls,
+                waterAvailable: refreshed.waterAvailable,
+                electricityAvailable: refreshed.electricityAvailable,
+                internetAvailable: refreshed.internetAvailable,
+                solarAvailable: refreshed.solarAvailable,
+                playgroundAvailable: refreshed.playgroundAvailable,
+                libraryAvailable: refreshed.libraryAvailable,
+                enrolmentSocial: refreshed.enrolmentSocial.map((r) => ({
+                  total: r.total,
+                  boys: r.boys,
+                  girls: r.girls,
+                })),
+                enrolmentMinority: refreshed.enrolmentMinority.map((r) => ({
+                  total: r.total,
+                  boys: r.boys,
+                  girls: r.girls,
+                })),
+                enrolmentOthers: refreshed.enrolmentOthers.map((r) => ({
+                  total: r.total,
+                  boys: r.boys,
+                  girls: r.girls,
+                })),
+                enrolmentAge: refreshed.enrolmentAge.map((r) => ({
+                  total: r.total,
+                  boys: r.boys,
+                  girls: r.girls,
+                })),
+                infra: refreshed.infra,
+                digital: refreshed.digital,
+              };
+              const complete = computeProfileCompletenessFromSnapshot(snap);
+              const pilot = computePilotSuitable(refreshed, complete);
+              await tx.school.update({
+                where: { udise },
+                data: { profileCompletenessPct: complete, pilotSuitable: pilot },
+              });
+            }
+
+            const head =
+              school.totalStudents ??
+              (school.totalBoys != null || school.totalGirls != null
+                ? (school.totalBoys ?? 0) + (school.totalGirls ?? 0)
+                : 0);
+            const revBase = {
+              totalStudents: head,
+              boys: school.totalBoys ?? undefined,
+              girls: school.totalGirls ?? undefined,
+            };
+            if (revBase.totalStudents > 0) {
+              await tx.schoolRevenueScenario.deleteMany({ where: { udise } });
+              await tx.schoolRevenueScenario.createMany({
+                data: buildRevenueScenarioRows(udise, revBase),
+              });
+            }
+          },
+          { maxWait: 15_000, timeout: 60_000 },
+        );
 
         await fs.writeFile(
           path.join(paths.extractionsDir, `${udise}.json`),
           JSON.stringify(extractionPayload, null, 2),
           "utf8",
         );
-
-        await prisma.schoolReportCardSnapshot.upsert({
-          where: { udise },
-          create: {
-            udise,
-            academicYear: parsed.academicYear ?? null,
-            sourcePdfHash: hash,
-            pdfRelativePath: pdfRel,
-            screenshotRelativePath: school.screenshotRelativePath ?? null,
-            payload: extractionPayload as object,
-            overallConfidence: parsed.confidence,
-          },
-          update: {
-            academicYear: parsed.academicYear ?? undefined,
-            sourcePdfHash: hash,
-            pdfRelativePath: pdfRel,
-            screenshotRelativePath: school.screenshotRelativePath ?? undefined,
-            payload: extractionPayload as object,
-            overallConfidence: parsed.confidence,
-            extractedAt: new Date(),
-          },
-        });
-
-        await prisma.schoolExtractionRaw.create({
-          data: {
-            udise,
-            sectionKey: "full_text",
-            rawText: extracted.text.slice(0, 500_000),
-            payload: parsed as object,
-            confidence: parsed.confidence,
-            extractorVersion: "1.0.0",
-            warnings: parsed.warnings,
-          },
-        });
-
-        const complete = computeProfileCompleteness(school);
-        const pilot = computePilotSuitable(school, complete);
-        await prisma.school.update({
-          where: { udise },
-          data: { profileCompletenessPct: complete, pilotSuitable: pilot },
-        });
-
-        const head =
-          school.totalStudents ??
-          (school.totalBoys != null || school.totalGirls != null
-            ? (school.totalBoys ?? 0) + (school.totalGirls ?? 0)
-            : 0);
-        const revBase = {
-          totalStudents: head,
-          boys: school.totalBoys ?? undefined,
-          girls: school.totalGirls ?? undefined,
-        };
-        if (revBase.totalStudents > 0) {
-          await prisma.schoolRevenueScenario.deleteMany({ where: { udise } });
-          for (const kind of ["LOW", "MEDIUM", "HIGH"] as const) {
-            const r = scenarioPresets(kind, revBase);
-            await prisma.schoolRevenueScenario.create({
-              data: {
-                udise,
-                kind,
-                label: kind,
-                inputs: revBase as object,
-                monthlyRevenue: r.monthlyRevenue,
-                annualRevenue: r.annualRevenue,
-                revenueBoys: r.revenueBoys,
-                revenueGirls: r.revenueGirls,
-                revenueTotal: r.revenueTotal,
-              },
-            });
-          }
-          const custom = calculateRevenue({
-            ...revBase,
-            pricePerWash: 30,
-            occupancyRate: 0.85,
-            washesPerStudentPerMonth: 4,
-          });
-          await prisma.schoolRevenueScenario.create({
-            data: {
-              udise,
-              kind: "CUSTOM",
-              label: "default",
-              inputs: { pricePerWash: 30, occupancy: 0.85, washesPerMonth: 4 },
-              monthlyRevenue: custom.monthlyRevenue,
-              annualRevenue: custom.annualRevenue,
-              revenueBoys: custom.revenueBoys,
-              revenueGirls: custom.revenueGirls,
-              revenueTotal: custom.revenueTotal,
-            },
-          });
-        }
 
         success++;
       } catch (e) {
@@ -473,6 +754,12 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
       where: { id: jobId },
       data: { status, finishedAt: new Date() },
     });
+
+    try {
+      await refreshMapAggregates();
+    } catch (err) {
+      logger.warn({ err, jobId }, "refreshMapAggregates after import job failed");
+    }
   } catch (e) {
     await prisma.importJob.update({
       where: { id: jobId },

@@ -9,6 +9,13 @@ describe("revenue-calculator", () => {
     expect(r.annualRevenue).toBeGreaterThan(r.monthlyRevenue);
   });
 
+  it("maps legacy occupancyRate to adoption via schema preprocess", () => {
+    const r = calculateRevenue({ totalStudents: 100, occupancyRate: 0.5 } as Parameters<
+      typeof calculateRevenue
+    >[0]);
+    expect(r.effectiveStudents).toBe(50);
+  });
+
   it("scenarioPresets scales price and washes", () => {
     const low = scenarioPresets("LOW", { totalStudents: 50 });
     const high = scenarioPresets("HIGH", { totalStudents: 50 });
