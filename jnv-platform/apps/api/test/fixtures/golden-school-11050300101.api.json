@@ -1,0 +1,694 @@
+{
+  "capturedAt": "2026-03-29T04:17:11.724Z",
+  "request": "GET /api/schools/11050300101",
+  "statusCode": 200,
+  "udise": "11050300101",
+  "body": {
+    "school": {
+      "udise": "11050300101",
+      "profile": {
+        "schoolName": "JNV 11050300101",
+        "managementName": null,
+        "categoryName": null,
+        "schoolType": null,
+        "classesFrom": null,
+        "classesTo": null,
+        "residentialStatus": null,
+        "yearOfEstablishment": null,
+        "ruralUrban": null,
+        "cbseAffiliationSec": null,
+        "cbseAffiliationHsec": null
+      },
+      "location": {
+        "apiStateName": null,
+        "geographicState": null,
+        "geographicDistrict": null,
+        "blockName": null,
+        "villageName": null,
+        "clusterName": null,
+        "pincode": null,
+        "latitude": null,
+        "longitude": null,
+        "region": null,
+        "districtLgd": null
+      },
+      "enrolmentHeadcount": {
+        "totalStudents": 445,
+        "totalBoys": 220,
+        "totalGirls": 225,
+        "totalTeachers": 28
+      },
+      "facilities": {
+        "waterAvailable": true,
+        "electricityAvailable": true,
+        "internetAvailable": null,
+        "solarAvailable": null,
+        "playgroundAvailable": null,
+        "libraryAvailable": null
+      },
+      "contact": {
+        "hmEmail": null,
+        "hmMobile": null
+      },
+      "provenance": {
+        "academicYear": null,
+        "sourcePdfHash": "509542933796cb629d2322bc5d42a07061c490bb4e7c61ddfe0c386e888ffa72",
+        "pdfRelativePath": "jnv-platform/tools/pmshri-crawler/data/pdfs/11050300101.pdf",
+        "screenshotRelativePath": null,
+        "overallExtractionConfidence": 0.95,
+        "lastPdfExtractedAt": "2026-03-29T04:11:34.788Z",
+        "importLastError": null,
+        "parsingStatus": "COMPLETE",
+        "extractorVersion": "2.1.0",
+        "reportSnapshot": {
+          "extractedAt": "2026-03-29T04:11:34.808Z",
+          "payload": {
+            "schemaVersion": 2,
+            "structured": {
+              "enrolmentSocial": {
+                "sc": 120,
+                "st": 45,
+                "obc": 200,
+                "general": 80,
+                "total": 445
+              },
+              "enrolmentSocialConfidence": 0.95,
+              "academicYear": "2024-25",
+              "enrolmentMinority": {
+                "muslim": 60,
+                "christian": 12,
+                "sikh": 8,
+                "buddhist": 4,
+                "jain": 1,
+                "others": 20,
+                "total": 105
+              },
+              "enrolmentMinorityConfidence": 0.72,
+              "enrolmentOthers": {
+                "cwsn": 3,
+                "ews": 42,
+                "bpl": 12,
+                "repeater": 5,
+                "otherCategories": 8,
+                "total": 70
+              },
+              "enrolmentOthersConfidence": 0.6799999999999999,
+              "enrolmentAge": {
+                "age_10": 50,
+                "age_11": 50,
+                "age_12": 50,
+                "age_13": 50,
+                "age_14": 49,
+                "age_15": 49,
+                "age_16": 49,
+                "age_17": 49,
+                "age_18": 49,
+                "total": 445
+              },
+              "enrolmentAgeConfidence": 0.92,
+              "infra": {
+                "electricity": true,
+                "water": true,
+                "internet": null,
+                "solar": null,
+                "playground": null,
+                "library": null
+              },
+              "infraConfidence": 0.24,
+              "digital": {
+                "desktops": 40,
+                "laptops": 8,
+                "tablets": 12,
+                "printers": 6,
+                "projectors": 4,
+                "smartClassTv": 5
+              },
+              "digitalConfidence": 0.6000000000000001,
+              "teachers": {
+                "total": 28,
+                "male": 16,
+                "female": 12,
+                "trained": 22,
+                "untrained": 6
+              },
+              "teachersConfidence": 0.7,
+              "students": {
+                "total": 445,
+                "boys": 220,
+                "girls": 225
+              }
+            },
+            "provenance": {
+              "academicYear": "2024-25",
+              "sourcePdfHash": "509542933796cb629d2322bc5d42a07061c490bb4e7c61ddfe0c386e888ffa72",
+              "pdfRelativePath": "jnv-platform/tools/pmshri-crawler/data/pdfs/11050300101.pdf",
+              "extractedAt": "2026-03-29T04:11:34.777Z",
+              "parserVersion": "2.1.0",
+              "extractorVersion": "2.1.0",
+              "charCount": 891,
+              "pages": 3,
+              "usedOcr": false
+            },
+            "confidenceBySection": {
+              "enrolmentSocial": 0.95,
+              "enrolmentMinority": 0.72,
+              "enrolmentOthers": 0.6799999999999999,
+              "enrolmentAge": 0.92,
+              "infra": 0.24,
+              "digital": 0.6000000000000001,
+              "teachers": 0.7
+            },
+            "sectionProvenance": {
+              "enrolmentSocial": {
+                "lineIndex": 0,
+                "charOffset": 0,
+                "page": null
+              },
+              "enrolmentMinority": {
+                "lineIndex": 0,
+                "charOffset": 0,
+                "page": null
+              },
+              "enrolmentOthers": {
+                "lineIndex": 0,
+                "charOffset": 0,
+                "page": null
+              },
+              "enrolmentAge": {
+                "lineIndex": 0,
+                "charOffset": 0,
+                "page": null
+              },
+              "infra": {
+                "lineIndex": 0,
+                "charOffset": 0,
+                "page": null
+              },
+              "digital": {
+                "lineIndex": 0,
+                "charOffset": 0,
+                "page": null
+              },
+              "teachers": {
+                "lineIndex": 0,
+                "charOffset": 0,
+                "page": null
+              }
+            }
+          }
+        }
+      },
+      "sections": {
+        "infra": {
+          "udise": "11050300101",
+          "puccaBuilding": null,
+          "functionalToiletsB": null,
+          "functionalToiletsG": null,
+          "rampsAvailable": null,
+          "medicalCheckup": null,
+          "extra": {
+            "source": "report_card_pdf",
+            "availability": {
+              "electricity": true,
+              "water": true,
+              "internet": null,
+              "solar": null,
+              "playground": null,
+              "library": null
+            }
+          },
+          "updatedAt": "2026-03-29T04:11:34.804Z"
+        },
+        "digital": {
+          "udise": "11050300101",
+          "smartClassTv": 5,
+          "laptops": 8,
+          "desktops": 40,
+          "tablets": 12,
+          "printers": 6,
+          "extra": {
+            "projectors": 4
+          },
+          "updatedAt": "2026-03-29T04:11:34.805Z"
+        },
+        "teachers": [
+          {
+            "id": "cmnb8sf8600dzvcj0frgrl475",
+            "udise": "11050300101",
+            "category": "report_card",
+            "label": "Total",
+            "count": 28,
+            "extra": null,
+            "createdAt": "2026-03-29T04:11:34.806Z"
+          },
+          {
+            "id": "cmnb8sf8600e0vcj0ql7dqjkw",
+            "udise": "11050300101",
+            "category": "report_card",
+            "label": "Male",
+            "count": 16,
+            "extra": null,
+            "createdAt": "2026-03-29T04:11:34.806Z"
+          },
+          {
+            "id": "cmnb8sf8600e1vcj0ba76qs8o",
+            "udise": "11050300101",
+            "category": "report_card",
+            "label": "Female",
+            "count": 12,
+            "extra": null,
+            "createdAt": "2026-03-29T04:11:34.806Z"
+          },
+          {
+            "id": "cmnb8sf8600e2vcj0o3b34jbz",
+            "udise": "11050300101",
+            "category": "report_card",
+            "label": "Trained",
+            "count": 22,
+            "extra": null,
+            "createdAt": "2026-03-29T04:11:34.806Z"
+          },
+          {
+            "id": "cmnb8sf8600e3vcj016xm84tb",
+            "udise": "11050300101",
+            "category": "report_card",
+            "label": "Untrained",
+            "count": 6,
+            "extra": null,
+            "createdAt": "2026-03-29T04:11:34.806Z"
+          }
+        ]
+      },
+      "chartSeries": {
+        "teachers": [
+          {
+            "category": "report_card",
+            "label": "Total",
+            "count": 28
+          },
+          {
+            "category": "report_card",
+            "label": "Male",
+            "count": 16
+          },
+          {
+            "category": "report_card",
+            "label": "Female",
+            "count": 12
+          },
+          {
+            "category": "report_card",
+            "label": "Trained",
+            "count": 22
+          },
+          {
+            "category": "report_card",
+            "label": "Untrained",
+            "count": 6
+          }
+        ]
+      },
+      "revenueScenarios": [
+        {
+          "id": "cmnb8sf8l00e6vcj0brvsfm6p",
+          "udise": "11050300101",
+          "kind": "LOW",
+          "label": "LOW",
+          "inputs": {
+            "totalStudents": 445,
+            "boys": 220,
+            "girls": 225
+          },
+          "monthlyRevenue": 10680,
+          "annualRevenue": 128160,
+          "revenueBoys": 5280,
+          "revenueGirls": 5400,
+          "revenueTotal": 10680,
+          "computedAt": "2026-03-29T04:11:34.821Z"
+        },
+        {
+          "id": "cmnb8sf8l00e7vcj0t4ipo74k",
+          "udise": "11050300101",
+          "kind": "MEDIUM",
+          "label": "MEDIUM",
+          "inputs": {
+            "totalStudents": 445,
+            "boys": 220,
+            "girls": 225
+          },
+          "monthlyRevenue": 45390,
+          "annualRevenue": 544680,
+          "revenueBoys": 22440,
+          "revenueGirls": 22950,
+          "revenueTotal": 45390,
+          "computedAt": "2026-03-29T04:11:34.821Z"
+        },
+        {
+          "id": "cmnb8sf8l00e8vcj0klvmpegt",
+          "udise": "11050300101",
+          "kind": "HIGH",
+          "label": "HIGH",
+          "inputs": {
+            "totalStudents": 445,
+            "boys": 220,
+            "girls": 225
+          },
+          "monthlyRevenue": 101460,
+          "annualRevenue": 1217520,
+          "revenueBoys": 50160,
+          "revenueGirls": 51300,
+          "revenueTotal": 101460,
+          "computedAt": "2026-03-29T04:11:34.821Z"
+        },
+        {
+          "id": "cmnb8sf8l00e9vcj0ixp63xau",
+          "udise": "11050300101",
+          "kind": "CUSTOM",
+          "label": "default",
+          "inputs": {
+            "pricePerWash": 30,
+            "adoptionRate": 0.85,
+            "washesPerStudentPerMonth": 4
+          },
+          "monthlyRevenue": 45390,
+          "annualRevenue": 544680,
+          "revenueBoys": 22440,
+          "revenueGirls": 22950,
+          "revenueTotal": 45390,
+          "computedAt": "2026-03-29T04:11:34.821Z"
+        }
+      ],
+      "progressEvents": [],
+      "notes": [],
+      "documents": [],
+      "rawExtractions": [
+        {
+          "id": "cmnb8sf8a00e5vcj0lip1i8t3",
+          "udise": "11050300101",
+          "sectionKey": "full_text",
+          "rawText": "UDISE : 11050300101 Academic Year : 2024-25 School Name : Integration Test Vidyalaya State : Test State District : Test District Social Category Scheduled Caste (SC) : 120 Scheduled Tribe (ST) : 45 OBC : 200 General : 80 Total : 445 Religious Minority Muslim : 60 Christian : 12 Sikh : 8 Buddhist : 4 Jain : 1 Others : 20 Minority Total : 105 Total Students : 445 Boys : 220 Girls : 225 Age-wise distribution 10 : 50 11 : 50 12 : 50 13 : 50 14 : 49 15 : 49 16 : 49 17 : 49 18 : 49 Age Total : 445 Basic Facilities Electricity Available : Yes Drinking Water Available : Yes Other Enrolment BPL : 12 Repeater : 5 CWSN : 3 EWS : 42 Other categories : 8 Total : 70 Teaching Staff Total Teachers : 28 Male Teachers : 16 Female Teachers : 12 Trained Teachers : 22 Untrained Teachers : 6 ICT / Digital Facilities Desktops : 40 Laptops : 8 Tablets : 12 Printers : 6 Smart Class TV : 5 Projectors : 4",
+          "payload": {
+            "normalized": {
+              "enrolmentSocial": {
+                "sc": 120,
+                "st": 45,
+                "obc": 200,
+                "general": 80,
+                "total": 445
+              },
+              "enrolmentSocialConfidence": 0.95,
+              "academicYear": "2024-25",
+              "enrolmentMinority": {
+                "muslim": 60,
+                "christian": 12,
+                "sikh": 8,
+                "buddhist": 4,
+                "jain": 1,
+                "others": 20,
+                "total": 105
+              },
+              "enrolmentMinorityConfidence": 0.72,
+              "enrolmentOthers": {
+                "cwsn": 3,
+                "ews": 42,
+                "bpl": 12,
+                "repeater": 5,
+                "otherCategories": 8,
+                "total": 70
+              },
+              "enrolmentOthersConfidence": 0.6799999999999999,
+              "enrolmentAge": {
+                "age_10": 50,
+                "age_11": 50,
+                "age_12": 50,
+                "age_13": 50,
+                "age_14": 49,
+                "age_15": 49,
+                "age_16": 49,
+                "age_17": 49,
+                "age_18": 49,
+                "total": 445
+              },
+              "enrolmentAgeConfidence": 0.92,
+              "infra": {
+                "electricity": true,
+                "water": true,
+                "internet": null,
+                "solar": null,
+                "playground": null,
+                "library": null
+              },
+              "infraConfidence": 0.24,
+              "digital": {
+                "desktops": 40,
+                "laptops": 8,
+                "tablets": 12,
+                "printers": 6,
+                "projectors": 4,
+                "smartClassTv": 5
+              },
+              "digitalConfidence": 0.6000000000000001,
+              "teachers": {
+                "total": 28,
+                "male": 16,
+                "female": 12,
+                "trained": 22,
+                "untrained": 6
+              },
+              "teachersConfidence": 0.7,
+              "students": {
+                "total": 445,
+                "boys": 220,
+                "girls": 225
+              }
+            },
+            "meta": {
+              "confidence": 0.95,
+              "warnings": []
+            },
+            "snapshotSchemaVersion": 2
+          },
+          "confidence": 0.95,
+          "extractorVersion": "2.1.0",
+          "warnings": [],
+          "createdAt": "2026-03-29T04:11:34.810Z"
+        }
+      ],
+      "profileCompletenessPct": 100,
+      "pilotSuitable": true,
+      "pipelineStatus": "NOT_REVIEWED",
+      "reviewStatus": "UNREVIEWED",
+      "manualRevenue": {
+        "manualRevenueOccupancy": null,
+        "manualWashPrice": null,
+        "manualWashesPerStudentMonth": null
+      }
+    },
+    "enrolmentSocial": [
+      {
+        "category": "SC",
+        "boys": null,
+        "girls": null,
+        "total": 120,
+        "chartValue": 120
+      },
+      {
+        "category": "ST",
+        "boys": null,
+        "girls": null,
+        "total": 45,
+        "chartValue": 45
+      },
+      {
+        "category": "OBC",
+        "boys": null,
+        "girls": null,
+        "total": 200,
+        "chartValue": 200
+      },
+      {
+        "category": "General",
+        "boys": null,
+        "girls": null,
+        "total": 80,
+        "chartValue": 80
+      },
+      {
+        "category": "Total",
+        "boys": null,
+        "girls": null,
+        "total": 445,
+        "chartValue": 445
+      }
+    ],
+    "enrolmentMinority": [
+      {
+        "category": "Muslim",
+        "boys": null,
+        "girls": null,
+        "total": 60,
+        "chartValue": 60
+      },
+      {
+        "category": "Christian",
+        "boys": null,
+        "girls": null,
+        "total": 12,
+        "chartValue": 12
+      },
+      {
+        "category": "Sikh",
+        "boys": null,
+        "girls": null,
+        "total": 8,
+        "chartValue": 8
+      },
+      {
+        "category": "Buddhist",
+        "boys": null,
+        "girls": null,
+        "total": 4,
+        "chartValue": 4
+      },
+      {
+        "category": "Jain",
+        "boys": null,
+        "girls": null,
+        "total": 1,
+        "chartValue": 1
+      },
+      {
+        "category": "Others",
+        "boys": null,
+        "girls": null,
+        "total": 20,
+        "chartValue": 20
+      },
+      {
+        "category": "Total",
+        "boys": null,
+        "girls": null,
+        "total": 105,
+        "chartValue": 105
+      }
+    ],
+    "enrolmentOthers": [
+      {
+        "category": "CWSN",
+        "boys": null,
+        "girls": null,
+        "total": 3,
+        "chartValue": 3
+      },
+      {
+        "category": "EWS",
+        "boys": null,
+        "girls": null,
+        "total": 42,
+        "chartValue": 42
+      },
+      {
+        "category": "BPL",
+        "boys": null,
+        "girls": null,
+        "total": 12,
+        "chartValue": 12
+      },
+      {
+        "category": "Repeater",
+        "boys": null,
+        "girls": null,
+        "total": 5,
+        "chartValue": 5
+      },
+      {
+        "category": "Other categories",
+        "boys": null,
+        "girls": null,
+        "total": 8,
+        "chartValue": 8
+      },
+      {
+        "category": "Total",
+        "boys": null,
+        "girls": null,
+        "total": 70,
+        "chartValue": 70
+      }
+    ],
+    "enrolmentAge": [
+      {
+        "ageBand": "10",
+        "boys": null,
+        "girls": null,
+        "total": 50,
+        "chartValue": 50
+      },
+      {
+        "ageBand": "11",
+        "boys": null,
+        "girls": null,
+        "total": 50,
+        "chartValue": 50
+      },
+      {
+        "ageBand": "12",
+        "boys": null,
+        "girls": null,
+        "total": 50,
+        "chartValue": 50
+      },
+      {
+        "ageBand": "13",
+        "boys": null,
+        "girls": null,
+        "total": 50,
+        "chartValue": 50
+      },
+      {
+        "ageBand": "14",
+        "boys": null,
+        "girls": null,
+        "total": 49,
+        "chartValue": 49
+      },
+      {
+        "ageBand": "15",
+        "boys": null,
+        "girls": null,
+        "total": 49,
+        "chartValue": 49
+      },
+      {
+        "ageBand": "16",
+        "boys": null,
+        "girls": null,
+        "total": 49,
+        "chartValue": 49
+      },
+      {
+        "ageBand": "17",
+        "boys": null,
+        "girls": null,
+        "total": 49,
+        "chartValue": 49
+      },
+      {
+        "ageBand": "18",
+        "boys": null,
+        "girls": null,
+        "total": 49,
+        "chartValue": 49
+      },
+      {
+        "ageBand": "Total",
+        "boys": null,
+        "girls": null,
+        "total": 445,
+        "chartValue": 445
+      }
+    ],
+    "extractionConfidence": 0.95,
+    "pdfPath": "jnv-platform/tools/pmshri-crawler/data/pdfs/11050300101.pdf"
+  }
+}

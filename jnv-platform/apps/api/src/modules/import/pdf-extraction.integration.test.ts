@@ -2,16 +2,27 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import * as PdfExtractMod from "./pdf-extract.js";
+import * as IngestMod from "./ingest.service.js";
 import {
+  extractDigitalFromReportCard,
   extractEnrolmentAgeFromReportCard,
   extractEnrolmentMinorityFromReportCard,
+  extractEnrolmentOthersFromReportCard,
   extractEnrolmentSocialFromReportCard,
   extractPdfText,
+  extractTeachersFromReportCard,
   parseReportCardText,
 } from "./pdf-extract.js";
 import type { ReportCardNormalized } from "./report-card-normalized.js";
-import { ENROLMENT_AGE_BAND, ENROLMENT_MINORITY_CATEGORY } from "./report-card-normalized.js";
+import {
+  ENROLMENT_AGE_BAND,
+  ENROLMENT_MINORITY_CATEGORY,
+  ENROLMENT_OTHERS_CATEGORY,
+} from "./report-card-normalized.js";
+import { REPORT_CARD_PARSER_VERSION } from "./parser/constants.js";
+import type { ReportCardSnapshotPayload } from "./report-card-extraction-payload.js";
 import {
   PROFILE_COMPLETENESS_WEIGHTS,
   computeProfileCompletenessFromSnapshot,
@@ -56,12 +67,41 @@ const GOLDEN_AGE = {
 
 const GOLDEN_STUDENTS = { total: 445, boys: 220, girls: 225 } as const;
 
-/** Fixture has social, minority, age, and headcount; no others/infra/digital rows from PDF. */
+const GOLDEN_OTHERS = {
+  bpl: 12,
+  repeater: 5,
+  cwsn: 3,
+  ews: 42,
+  otherCategories: 8,
+  total: 70,
+} as const;
+
+const GOLDEN_DIGITAL = {
+  desktops: 40,
+  laptops: 8,
+  tablets: 12,
+  printers: 6,
+  smartClassTv: 5,
+  projectors: 4,
+} as const;
+
+const GOLDEN_TEACHERS = {
+  total: 28,
+  male: 16,
+  female: 12,
+  trained: 22,
+  untrained: 6,
+} as const;
+
+/** All weighted blocks present on the expanded fixture PDF. */
 const EXPECTED_COMPLETENESS =
   PROFILE_COMPLETENESS_WEIGHTS.social +
   PROFILE_COMPLETENESS_WEIGHTS.minority +
+  PROFILE_COMPLETENESS_WEIGHTS.others +
   PROFILE_COMPLETENESS_WEIGHTS.age +
-  PROFILE_COMPLETENESS_WEIGHTS.studentTotals;
+  PROFILE_COMPLETENESS_WEIGHTS.studentTotals +
+  PROFILE_COMPLETENESS_WEIGHTS.infra +
+  PROFILE_COMPLETENESS_WEIGHTS.digital;
 
 type Social = ReportCardNormalized["enrolmentSocial"];
 type Minority = ReportCardNormalized["enrolmentMinority"];
@@ -160,7 +200,37 @@ describe("report-card PDF fixture (repo)", () => {
     }
   });
 
-  it("parseReportCardText attaches social, minority, age, and student headcount", async () => {
+  it("section extractors match digital, teachers, others, and academic year on fixture PDF", async () => {
+    if (!fs.existsSync(FIXTURE_PDF)) {
+      throw new Error(`MISSING PDF FIXTURE: ${FIXTURE_PDF}`);
+    }
+    const buffer = fs.readFileSync(FIXTURE_PDF);
+    const extracted = await extractPdfText(buffer);
+    const { digital } = extractDigitalFromReportCard(extracted.text);
+    for (const k of Object.keys(GOLDEN_DIGITAL) as (keyof typeof GOLDEN_DIGITAL)[]) {
+      if (digital[k] !== GOLDEN_DIGITAL[k]) {
+        fail("digital", `${k}: expected ${GOLDEN_DIGITAL[k]}, got ${digital[k]}`);
+      }
+    }
+    const { teachers } = extractTeachersFromReportCard(extracted.text);
+    for (const k of Object.keys(GOLDEN_TEACHERS) as (keyof typeof GOLDEN_TEACHERS)[]) {
+      if (teachers[k] !== GOLDEN_TEACHERS[k]) {
+        fail("teachers", `${k}: expected ${GOLDEN_TEACHERS[k]}, got ${teachers[k]}`);
+      }
+    }
+    const { enrolmentOthers } = extractEnrolmentOthersFromReportCard(extracted.text);
+    for (const k of Object.keys(GOLDEN_OTHERS) as (keyof typeof GOLDEN_OTHERS)[]) {
+      if (enrolmentOthers[k] !== GOLDEN_OTHERS[k]) {
+        fail("others", `${k}: expected ${GOLDEN_OTHERS[k]}, got ${enrolmentOthers[k]}`);
+      }
+    }
+    const parsed = parseReportCardText(extracted.text, GOLDEN_UDISE);
+    if (parsed.academicYear !== "2024-25") {
+      fail("academicYear", `expected 2024-25, got ${parsed.academicYear}`);
+    }
+  });
+
+  it("parseReportCardText attaches social, minority, age, student headcount, others, digital, teachers", async () => {
     if (!fs.existsSync(FIXTURE_PDF)) {
       throw new Error(`MISSING PDF FIXTURE: ${FIXTURE_PDF}`);
     }
@@ -183,6 +253,25 @@ describe("report-card PDF fixture (repo)", () => {
     if (parsed.students.girls !== GOLDEN_STUDENTS.girls) {
       fail("parse.students", `girls expected ${GOLDEN_STUDENTS.girls}, got ${parsed.students.girls}`);
     }
+    if (!parsed.enrolmentOthers) fail("parse", "missing enrolmentOthers");
+    for (const k of Object.keys(GOLDEN_OTHERS) as (keyof typeof GOLDEN_OTHERS)[]) {
+      if (parsed.enrolmentOthers[k] !== GOLDEN_OTHERS[k]) {
+        fail("parse.others", `${k}: expected ${GOLDEN_OTHERS[k]}, got ${parsed.enrolmentOthers[k]}`);
+      }
+    }
+    if (!parsed.digital) fail("parse", "missing digital");
+    for (const k of Object.keys(GOLDEN_DIGITAL) as (keyof typeof GOLDEN_DIGITAL)[]) {
+      if (parsed.digital[k] !== GOLDEN_DIGITAL[k]) {
+        fail("parse.digital", `${k}: expected ${GOLDEN_DIGITAL[k]}, got ${parsed.digital[k]}`);
+      }
+    }
+    if (!parsed.teachers) fail("parse", "missing teachers");
+    for (const k of Object.keys(GOLDEN_TEACHERS) as (keyof typeof GOLDEN_TEACHERS)[]) {
+      if (parsed.teachers[k] !== GOLDEN_TEACHERS[k]) {
+        fail("parse.teachers", `${k}: expected ${GOLDEN_TEACHERS[k]}, got ${parsed.teachers[k]}`);
+      }
+    }
+    if (parsed.academicYear !== "2024-25") fail("parse", "academicYear");
   });
 });
 
@@ -325,9 +414,76 @@ describe("ingest + DB + API + completeness (real PDF fixture)", () => {
     if (Math.round(pct) !== EXPECTED_COMPLETENESS) {
       fail(
         "DB completeness",
-        `expected ${EXPECTED_COMPLETENESS} from weights (social+minority+age+students), got ${pct}`,
+        `expected ${EXPECTED_COMPLETENESS} from full fixture weights, got ${pct}`,
       );
     }
+  });
+
+  it("DB: SchoolDigitalFacilities matches golden ICT extraction", async () => {
+    const { getPrisma } = await import("../../shared/prisma.js");
+    const prisma = getPrisma();
+    const d = await prisma.schoolDigitalFacilities.findUnique({ where: { udise: GOLDEN_UDISE } });
+    if (!d) fail("DB digital", "SchoolDigitalFacilities row missing");
+    expect(d.desktops).toBe(GOLDEN_DIGITAL.desktops);
+    expect(d.laptops).toBe(GOLDEN_DIGITAL.laptops);
+    expect(d.tablets).toBe(GOLDEN_DIGITAL.tablets);
+    expect(d.printers).toBe(GOLDEN_DIGITAL.printers);
+    expect(d.smartClassTv).toBe(GOLDEN_DIGITAL.smartClassTv);
+    const extra = d.extra as { projectors?: number } | null;
+    expect(extra?.projectors).toBe(GOLDEN_DIGITAL.projectors);
+  });
+
+  it("DB: SchoolTeacherBreakdown matches golden teaching staff extraction", async () => {
+    const { getPrisma } = await import("../../shared/prisma.js");
+    const prisma = getPrisma();
+    const rows = await prisma.schoolTeacherBreakdown.findMany({
+      where: { udise: GOLDEN_UDISE, category: "report_card" },
+      orderBy: { label: "asc" },
+    });
+    if (rows.length < 5) fail("DB teachers", `expected 5 rows, got ${rows.length}`);
+    const map = Object.fromEntries(rows.map((r) => [r.label, r.count])) as Record<string, number>;
+    expect(map["Female"]).toBe(GOLDEN_TEACHERS.female);
+    expect(map["Male"]).toBe(GOLDEN_TEACHERS.male);
+    expect(map["Total"]).toBe(GOLDEN_TEACHERS.total);
+    expect(map["Trained"]).toBe(GOLDEN_TEACHERS.trained);
+    expect(map["Untrained"]).toBe(GOLDEN_TEACHERS.untrained);
+  });
+
+  it("DB: SchoolEnrolmentOthers includes BPL, Repeater, CWSN, EWS, and totals", async () => {
+    const { getPrisma } = await import("../../shared/prisma.js");
+    const prisma = getPrisma();
+    const rows = await prisma.schoolEnrolmentOthers.findMany({
+      where: { udise: GOLDEN_UDISE },
+      orderBy: { category: "asc" },
+    });
+    if (rows.length < 6) fail("DB others", `expected 6 rows, got ${rows.length}`);
+    const map = Object.fromEntries(rows.map((r) => [r.category, r.total])) as Record<string, number | null>;
+    for (const key of Object.keys(GOLDEN_OTHERS) as (keyof typeof GOLDEN_OTHERS)[]) {
+      const label = ENROLMENT_OTHERS_CATEGORY[key];
+      const exp = GOLDEN_OTHERS[key];
+      if (map[label] !== exp) fail("DB others", `${label}: expected ${exp}, got ${map[label]}`);
+    }
+  });
+
+  it("DB: SchoolReportCardSnapshot.payload is schema v2 with structured extract + provenance", async () => {
+    const { getPrisma } = await import("../../shared/prisma.js");
+    const prisma = getPrisma();
+    const snap = await prisma.schoolReportCardSnapshot.findUnique({ where: { udise: GOLDEN_UDISE } });
+    if (!snap) fail("snapshot", "missing SchoolReportCardSnapshot");
+    expect(snap.academicYear).toBe("2024-25");
+    const payload = snap.payload as unknown as ReportCardSnapshotPayload;
+    if (payload.schemaVersion !== 2) fail("payload", `schemaVersion expected 2, got ${payload.schemaVersion}`);
+    expect(payload.provenance.sourcePdfHash).toBe(snap.sourcePdfHash);
+    expect(payload.provenance.parserVersion).toBe(REPORT_CARD_PARSER_VERSION);
+    expect(payload.provenance.pdfRelativePath).toContain(`${GOLDEN_UDISE}.pdf`);
+    expect(payload.provenance.extractedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(payload.confidenceBySection.enrolmentSocial).toBe(payload.structured.enrolmentSocialConfidence);
+    expect(payload.structured.digital?.smartClassTv).toBe(GOLDEN_DIGITAL.smartClassTv);
+    expect(payload.structured.teachers?.total).toBe(GOLDEN_TEACHERS.total);
+    expect(payload.structured.enrolmentOthers?.cwsn).toBe(GOLDEN_OTHERS.cwsn);
+    expect(payload.sectionProvenance.digital?.lineIndex).not.toBeNull();
+    expect(payload.sectionProvenance.teachers?.lineIndex).not.toBeNull();
+    expect(payload.sectionProvenance.enrolmentOthers?.lineIndex).not.toBeNull();
   });
 
   it("computeProfileCompletenessFromSnapshot matches stored profileCompletenessPct for ingested rows", async () => {
@@ -392,21 +548,42 @@ describe("ingest + DB + API + completeness (real PDF fixture)", () => {
     await resetPrismaForTests();
     const { buildApp } = await import("../../app.js");
     const app = await buildApp();
+    const spyExtractPdfText = vi.spyOn(PdfExtractMod, "extractPdfText");
+    const spyExtractReportCard = vi.spyOn(PdfExtractMod, "extractReportCard");
+    const spyRunPdfImport = vi.spyOn(IngestMod, "runPdfImport");
     try {
+      spyExtractPdfText.mockClear();
+      spyExtractReportCard.mockClear();
+      spyRunPdfImport.mockClear();
+      await app.inject({ method: "GET", url: `/api/schools/${GOLDEN_UDISE}` });
+      spyExtractPdfText.mockClear();
+      spyExtractReportCard.mockClear();
+      spyRunPdfImport.mockClear();
+      const t0 = Date.now();
       const res = await app.inject({ method: "GET", url: `/api/schools/${GOLDEN_UDISE}` });
+      const elapsed = Date.now() - t0;
+      expect(elapsed, `GET /api/schools/:udise must respond in <300ms after warm-up (got ${elapsed}ms)`).toBeLessThan(
+        300,
+      );
+      expect(spyExtractPdfText, "School detail must not re-parse PDF (extractPdfText)").not.toHaveBeenCalled();
+      expect(spyExtractReportCard, "School detail must not re-parse PDF (extractReportCard)").not.toHaveBeenCalled();
+      expect(spyRunPdfImport, "School detail must not trigger import (runPdfImport)").not.toHaveBeenCalled();
       if (res.statusCode !== 200) {
         fail("API", `expected 200, got ${res.statusCode}: ${res.body}`);
       }
+      type ChartRow = { category?: string; ageBand?: string; total: number | null; chartValue: number };
       const body = res.json() as {
         school: {
           udise: string;
           profileCompletenessPct: number | null;
           enrolmentHeadcount: { totalStudents: number | null; totalBoys: number | null; totalGirls: number | null };
+          chartSeries: { teachers: { category: string; label: string; count: number }[] };
+          provenance: { reportSnapshot?: { payload?: ReportCardSnapshotPayload } };
         };
-        enrolmentSocial: { category: string; total: number | null; chartValue: number }[];
-        enrolmentMinority: { category: string; total: number | null; chartValue: number }[];
-        enrolmentOthers: unknown[];
-        enrolmentAge: { ageBand: string; total: number | null; chartValue: number }[];
+        enrolmentSocial: ChartRow[];
+        enrolmentMinority: ChartRow[];
+        enrolmentOthers: ChartRow[];
+        enrolmentAge: ChartRow[];
         pdfPath: string | null;
         extractionConfidence: number | null;
       };
@@ -476,7 +653,36 @@ describe("ingest + DB + API + completeness (real PDF fixture)", () => {
           `profileCompletenessPct expected ~${EXPECTED_COMPLETENESS}, got ${body.school.profileCompletenessPct}`,
         );
       }
+
+      const othersExpected: Record<string, number> = {};
+      for (const k of Object.keys(GOLDEN_OTHERS) as (keyof typeof GOLDEN_OTHERS)[]) {
+        othersExpected[ENROLMENT_OTHERS_CATEGORY[k]] = GOLDEN_OTHERS[k];
+      }
+      assertChartRows("API others", body.enrolmentOthers, "category", othersExpected);
+
+      const teachersSeries = body.school.chartSeries.teachers as { category: string; label: string; count: number }[];
+      if (!Array.isArray(teachersSeries) || teachersSeries.length < 5) {
+        fail("API chartSeries.teachers", `expected >= 5 rows, got ${teachersSeries?.length}`);
+      }
+      const tmap = Object.fromEntries(teachersSeries.map((r) => [r.label, r.count])) as Record<string, number>;
+      expect(tmap["Total"]).toBe(GOLDEN_TEACHERS.total);
+      expect(tmap["Male"]).toBe(GOLDEN_TEACHERS.male);
+      expect(tmap["Female"]).toBe(GOLDEN_TEACHERS.female);
+      expect(tmap["Trained"]).toBe(GOLDEN_TEACHERS.trained);
+      expect(tmap["Untrained"]).toBe(GOLDEN_TEACHERS.untrained);
+      for (const r of teachersSeries) {
+        if (r.category !== "report_card") fail("API teachers", `category expected report_card, got ${r.category}`);
+      }
+
+      const snapPayload = body.school.provenance.reportSnapshot?.payload;
+      if (!snapPayload || snapPayload.schemaVersion !== 2) {
+        fail("API reportSnapshot.payload", "missing schema v2 payload on school.provenance.reportSnapshot");
+      }
+      expect(JSON.stringify(snapPayload).length, "reportSnapshot.payload must not be empty").toBeGreaterThan(80);
+      expect(snapPayload.provenance.parserVersion).toBe(REPORT_CARD_PARSER_VERSION);
+      expect(snapPayload.structured.teachers?.trained).toBe(GOLDEN_TEACHERS.trained);
     } finally {
+      vi.restoreAllMocks();
       await app.close();
     }
   });

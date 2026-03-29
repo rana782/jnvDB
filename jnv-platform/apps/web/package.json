@@ -9,7 +9,7 @@
     "lint": "eslint src --ext ts,tsx",
     "preview": "vite preview",
     "e2e": "playwright test",
-    "e2e:verify": "playwright test verify-screenshots.spec.ts --workers=1"
+    "e2e:verify": "playwright test verify-screenshots.spec.ts verify-fixture-expansion.spec.ts --workers=1"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.8",

@@ -32,8 +32,8 @@ export const registerImportRoutes: FastifyPluginAsync = async (app) => {
       }
 
       if (body.seedOnly) {
-        const n = await seedSchoolsFromJson(paths, paths.repoRoot);
         const stubs = await ensureSchoolStubsFromPdfDir(paths, paths.repoRoot);
+        const n = await seedSchoolsFromJson(paths, paths.repoRoot);
         return { ok: true, seededFromJson: n, stubsFromPdf: stubs };
       }
 

@@ -10,6 +10,8 @@
     "lint": "npm run lint -w @jnv/api && npm run lint -w @jnv/web",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "test": "npm run test -w @jnv/api",
+    "test:release-gate": "npm run test -w @jnv/api && npm run e2e:verify -w @jnv/web",
+    "fixture:pdfs:extra": "npm run fixture:pdfs:extra -w @jnv/api",
     "test:ci": "npm run test:ci -w @jnv/api",
     "db:generate": "npm run db:generate -w @jnv/api",
     "db:migrate": "npm run db:migrate -w @jnv/api",
@@ -18,7 +20,7 @@
     "import:run": "npm run import:run -w @jnv/api",
     "e2e": "npm run e2e -w @jnv/web",
     "e2e:verify": "npm run e2e:verify -w @jnv/web",
-    "verify:stack": "npm run db:setup -w @jnv/api && npm run import:run -w @jnv/api && npm run e2e:verify -w @jnv/web"
+    "verify:stack": "npm run db:setup -w @jnv/api && npm run verify:golden-pdf -w @jnv/api && npm run import:run -w @jnv/api && npm run e2e:verify -w @jnv/web && npm run verify:capture-api -w @jnv/api"
   },
   "devDependencies": {
     "prettier": "^3.4.2"

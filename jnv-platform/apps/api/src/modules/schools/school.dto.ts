@@ -28,6 +28,34 @@ export const schoolListInclude = {
 
 export type SchoolListRow = Prisma.SchoolGetPayload<{ include: typeof schoolListInclude }>;
 
+/** Compare view: same facts as detail for charts/sections, without notes, documents, raw extractions, or snapshot. */
+export const schoolCompareInclude = {
+  state: { include: { region: true } },
+  district: true,
+  infra: true,
+  digital: true,
+  teachers: true,
+  enrolmentSocial: true,
+  enrolmentMinority: true,
+  enrolmentOthers: true,
+  enrolmentAge: true,
+  revenueScenarios: true,
+  progressEvents: { orderBy: { createdAt: "desc" as const }, take: 20 },
+} satisfies Prisma.SchoolInclude;
+
+export type SchoolCompareRow = Prisma.SchoolGetPayload<{ include: typeof schoolCompareInclude }>;
+
+/** Adapt compare query rows to the detail shape expected by `toSchoolCanonical`. */
+export function compareRowAsDetailRowForCanonical(s: SchoolCompareRow): SchoolDetailRow {
+  return {
+    ...s,
+    rawExtractions: [],
+    notes: [],
+    documents: [],
+    reportCardSnapshot: null,
+  } as SchoolDetailRow;
+}
+
 export type SchoolProvenanceDto = {
   academicYear: string | null;
   sourcePdfHash: string | null;
@@ -211,6 +239,10 @@ export type SchoolDetailApiSchoolDto = Omit<SchoolCanonicalDto, "sections" | "ch
   >;
 };
 
+/**
+ * GET /api/schools/:udise — single contract for the school detail page (nested school + flat enrolment arrays + meta).
+ * Progress lives on `school.progressEvents`; revenue on `school.revenueScenarios`; completeness on `school.profileCompletenessPct`.
+ */
 export type SchoolDetailApiResponse = {
   school: SchoolDetailApiSchoolDto;
   enrolmentSocial: EnrolmentCategoryChartDto[];

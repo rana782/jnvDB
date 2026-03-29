@@ -21,10 +21,26 @@ import { getPrisma } from "../../shared/prisma.js";
 import { AppError } from "../../shared/errors.js";
 import { pipelineStatusSchema } from "../../shared/pipeline-status.js";
 
-function resolveAbsoluteFromRelative(repoRoot: string | undefined, rel: string): string {
-  if (path.isAbsolute(rel)) return rel;
-  if (repoRoot) return path.join(repoRoot, rel.replace(/\//g, path.sep));
-  return path.resolve(rel);
+/** PDF paths may be stored relative to monorepo root (`jnv-platform/tools/...`) while `repoRoot` is `jnv-platform`; try fallbacks. */
+function resolveExistingPdfAbsolute(repoRoot: string | undefined, rel: string): string | null {
+  const normalized = rel.trim().replace(/\//g, path.sep);
+  if (!normalized) return null;
+  if (path.isAbsolute(normalized)) {
+    return fs.existsSync(normalized) ? normalized : null;
+  }
+  const candidates: string[] = [];
+  if (repoRoot) {
+    candidates.push(path.join(repoRoot, normalized));
+    if (normalized.startsWith(`jnv-platform${path.sep}`)) {
+      candidates.push(path.join(repoRoot, normalized.slice(`jnv-platform${path.sep}`.length)));
+    }
+    candidates.push(path.join(repoRoot, "jnv-platform", normalized));
+  }
+  candidates.push(path.resolve(normalized));
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return null;
 }
 
 async function audit(
@@ -90,8 +106,8 @@ export const registerSchoolRoutes: FastifyPluginAsync = async (app) => {
     } catch {
       throw new AppError("CONFIG", "Data paths not configured", 500);
     }
-    const abs = resolveAbsoluteFromRelative(paths.repoRoot, school.pdfRelativePath);
-    if (!fs.existsSync(abs)) throw new AppError("NOT_FOUND", "PDF file missing on disk", 404);
+    const abs = resolveExistingPdfAbsolute(paths.repoRoot, school.pdfRelativePath);
+    if (!abs) throw new AppError("NOT_FOUND", "PDF file missing on disk", 404);
     return reply.type("application/pdf").send(fs.createReadStream(abs));
   });
 

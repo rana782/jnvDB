@@ -7,6 +7,8 @@ import { offsetLimit } from "../../shared/pagination.js";
 import { calculateRevenue } from "../analytics/revenue-calculator.js";
 import type { Prisma } from "@prisma/client";
 import {
+  compareRowAsDetailRowForCanonical,
+  schoolCompareInclude,
   schoolDetailInclude,
   schoolListInclude,
   toSchoolCanonical,
@@ -279,9 +281,11 @@ export async function compareSchoolsCanonical(udisesRaw: string[]): Promise<{ sc
   }
   const rows = await prisma.school.findMany({
     where: { udise: { in: uniq } },
-    include: schoolDetailInclude,
+    include: schoolCompareInclude,
   });
-  const refreshed = await Promise.all(rows.map((r) => persistCompletenessIfChanged(r)));
+  const refreshed = await Promise.all(
+    rows.map((r) => persistCompletenessIfChanged(compareRowAsDetailRowForCanonical(r))),
+  );
   const map = new Map(refreshed.map((r) => [r.udise, r]));
   const schools: SchoolCanonicalDto[] = [];
   for (const u of uniq) {

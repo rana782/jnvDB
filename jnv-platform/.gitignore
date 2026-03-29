@@ -12,3 +12,7 @@ apps/web/e2e/screenshots-output/
 apps/api/coverage/
 apps/web/test-results/
 .DS_Store
+# Vitest mkdtemp under test/fixtures (pdf import integration tests)
+apps/api/test/fixtures/pdf-bulk-*/
+apps/api/test/fixtures/pdf-expansion-*/
+tools/pmshri-crawler/data/extractions/

@@ -5,18 +5,27 @@ import type { ScrapedDataPaths } from "../../config/paths.js";
 import { toRepoRelative } from "../../config/paths.js";
 import { getPrisma } from "../../shared/prisma.js";
 import { normalizeUdise } from "../../shared/udise.js";
-import { extractPdfText, parseReportCardText, reportCardExtractionMeta } from "./pdf-extract.js";
+import {
+  ageHasData,
+  digitalHasData,
+  extractPdfText,
+  infraHasData,
+  minorityHasData,
+  othersHasData,
+  parseReportCardText,
+  reportCardExtractionMeta,
+  teachersHasData,
+} from "./pdf-extract.js";
+import { buildReportCardSnapshotPayload } from "./report-card-extraction-payload.js";
+import { REPORT_CARD_PARSER_VERSION } from "./parser/constants.js";
 import type { ReportCardNormalized } from "./report-card-normalized.js";
 import {
   ENROLMENT_AGE_BAND,
   ENROLMENT_MINORITY_CATEGORY,
   ENROLMENT_OTHERS_CATEGORY,
 } from "./report-card-normalized.js";
-import {
-  computePilotSuitable,
-  computeProfileCompletenessFromSnapshot,
-  type ProfileCompletenessSnapshot,
-} from "../analytics/derived-metrics.js";
+import { computePilotSuitable, type ProfileCompletenessSnapshot } from "../analytics/derived-metrics.js";
+import { calculateCompletenessFromSnapshot } from "./completeness.js";
 import { calculateRevenue, scenarioPresets } from "../analytics/revenue-calculator.js";
 import { logger } from "../../shared/logger.js";
 import type { ImportJobStatus, Prisma } from "@prisma/client";
@@ -39,14 +48,6 @@ export type SchoolsJsonRow = {
   hm_email?: string;
   hm_mobile?: string;
 };
-
-function yn(s: string | undefined): boolean | undefined {
-  if (!s) return undefined;
-  const t = s.toLowerCase();
-  if (t === "yes" || t === "1" || t === "true") return true;
-  if (t === "no" || t === "0" || t === "false") return false;
-  return undefined;
-}
 
 /** Rows for `createMany` — one row per category with a non-null total (no duplicates). */
 function buildEnrolmentSocialCreateManyData(
@@ -187,7 +188,7 @@ function buildSchoolDigitalCreateData(
     laptops: digital.laptops,
     tablets: digital.tablets,
     printers: digital.printers,
-    smartClassTv: null,
+    smartClassTv: digital.smartClassTv ?? null,
     ...(digital.projectors != null
       ? { extra: { projectors: digital.projectors } as Prisma.InputJsonValue }
       : {}),
@@ -306,8 +307,6 @@ export async function seedSchoolsFromJson(paths: ScrapedDataPaths, repoRoot?: st
       lgdDistrictId: row.lgd_district_id ?? null,
       hmEmail: row.hm_email ?? null,
       hmMobile: row.hm_mobile ?? null,
-      internetAvailable: yn(row.internet_availability) ?? null,
-      electricityAvailable: yn(row.electricity_availability) ?? null,
       pdfRelativePath: pdfRel,
       screenshotRelativePath: shotRel ?? null,
       parsingStatus: "PENDING",
@@ -327,8 +326,6 @@ export async function seedSchoolsFromJson(paths: ScrapedDataPaths, repoRoot?: st
         lgdDistrictId: data.lgdDistrictId,
         hmEmail: data.hmEmail,
         hmMobile: data.hmMobile,
-        internetAvailable: data.internetAvailable,
-        electricityAvailable: data.electricityAvailable,
         pdfRelativePath: data.pdfRelativePath,
         screenshotRelativePath: data.screenshotRelativePath,
       },
@@ -400,8 +397,8 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
 
   try {
     await fs.mkdir(paths.extractionsDir, { recursive: true });
-    await seedSchoolsFromJson(paths, repoRoot);
     await ensureSchoolStubsFromPdfDir(paths, repoRoot);
+    await seedSchoolsFromJson(paths, repoRoot);
     const files = (await fs.readdir(paths.pdfsDir)).filter((f) => f.toLowerCase().endsWith(".pdf"));
     await prisma.importJob.update({
       where: { id: jobId },
@@ -490,19 +487,18 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
         const totalBoys = st?.boys ?? undefined;
         const totalGirls = st?.girls ?? undefined;
 
-        const extractionPayload = {
-          udise,
+        const snapshotPayload = buildReportCardSnapshotPayload({
+          text: extracted.text,
+          structured: normalized,
           sourcePdfHash: hash,
           pdfRelativePath: pdfRel,
-          normalized,
-          meta,
+          extractorVersion: REPORT_CARD_PARSER_VERSION,
           extraction: {
             charCount: extracted.charCount,
             pages: extracted.pages,
             usedOcr: extracted.usedOcr,
           },
-          importedAt: new Date().toISOString(),
-        };
+        });
 
         const infraFacilityPatch =
           normalized.infra !== undefined ? schoolFacilityScalarsFromInfra(normalized.infra) : {};
@@ -523,7 +519,7 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
                 totalGirls: totalGirls ?? null,
                 sourcePdfHash: hash,
                 pdfRelativePath: pdfRel,
-                extractorVersion: "1.0.0",
+                extractorVersion: REPORT_CARD_PARSER_VERSION,
                 parsingStatus: meta.confidence >= 0.65 ? "COMPLETE" : "PARTIAL",
                 lastPdfExtractedAt: new Date(),
                 overallExtractionConfidence: meta.confidence,
@@ -540,7 +536,7 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
                 totalGirls: totalGirls ?? undefined,
                 sourcePdfHash: hash,
                 pdfRelativePath: pdfRel,
-                extractorVersion: "1.0.0",
+                extractorVersion: REPORT_CARD_PARSER_VERSION,
                 parsingStatus: meta.confidence >= 0.65 ? "COMPLETE" : "PARTIAL",
                 lastPdfExtractedAt: new Date(),
                 overallExtractionConfidence: meta.confidence,
@@ -558,46 +554,46 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
               }
             }
 
-            if (normalized.enrolmentMinority !== undefined) {
-              await tx.schoolEnrolmentMinority.deleteMany({ where: { udise } });
+            await tx.schoolEnrolmentMinority.deleteMany({ where: { udise } });
+            if (normalized.enrolmentMinority && minorityHasData(normalized.enrolmentMinority)) {
               const minorityRows = buildEnrolmentMinorityCreateManyData(udise, normalized.enrolmentMinority);
               if (minorityRows.length > 0) {
                 await tx.schoolEnrolmentMinority.createMany({ data: minorityRows });
               }
             }
 
-            if (normalized.enrolmentOthers !== undefined) {
-              await tx.schoolEnrolmentOthers.deleteMany({ where: { udise } });
+            await tx.schoolEnrolmentOthers.deleteMany({ where: { udise } });
+            if (normalized.enrolmentOthers && othersHasData(normalized.enrolmentOthers)) {
               const othersRows = buildEnrolmentOthersCreateManyData(udise, normalized.enrolmentOthers);
               if (othersRows.length > 0) {
                 await tx.schoolEnrolmentOthers.createMany({ data: othersRows });
               }
             }
 
-            if (normalized.enrolmentAge !== undefined) {
-              await tx.schoolEnrolmentAge.deleteMany({ where: { udise } });
+            await tx.schoolEnrolmentAge.deleteMany({ where: { udise } });
+            if (normalized.enrolmentAge && ageHasData(normalized.enrolmentAge)) {
               const ageRows = buildEnrolmentAgeCreateManyData(udise, normalized.enrolmentAge);
               if (ageRows.length > 0) {
                 await tx.schoolEnrolmentAge.createMany({ data: ageRows });
               }
             }
 
-            if (normalized.infra !== undefined) {
-              await tx.schoolInfra.deleteMany({ where: { udise } });
+            await tx.schoolInfra.deleteMany({ where: { udise } });
+            if (normalized.infra && infraHasData(normalized.infra)) {
               await tx.schoolInfra.create({
                 data: buildSchoolInfraCreateData(udise, normalized.infra),
               });
             }
 
-            if (normalized.digital !== undefined) {
-              await tx.schoolDigitalFacilities.deleteMany({ where: { udise } });
+            await tx.schoolDigitalFacilities.deleteMany({ where: { udise } });
+            if (normalized.digital && digitalHasData(normalized.digital)) {
               await tx.schoolDigitalFacilities.create({
                 data: buildSchoolDigitalCreateData(udise, normalized.digital),
               });
             }
 
-            if (normalized.teachers !== undefined) {
-              await tx.schoolTeacherBreakdown.deleteMany({ where: { udise } });
+            await tx.schoolTeacherBreakdown.deleteMany({ where: { udise } });
+            if (normalized.teachers && teachersHasData(normalized.teachers)) {
               const teacherRows = buildTeacherBreakdownCreateManyData(udise, normalized.teachers);
               if (teacherRows.length > 0) {
                 await tx.schoolTeacherBreakdown.createMany({ data: teacherRows });
@@ -608,18 +604,19 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
               where: { udise },
               create: {
                 udise,
-                academicYear: null,
+                academicYear: normalized.academicYear ?? null,
                 sourcePdfHash: hash,
                 pdfRelativePath: pdfRel,
                 screenshotRelativePath: school.screenshotRelativePath ?? null,
-                payload: extractionPayload as object,
+                payload: snapshotPayload as object,
                 overallConfidence: meta.confidence,
               },
               update: {
+                academicYear: normalized.academicYear ?? null,
                 sourcePdfHash: hash,
                 pdfRelativePath: pdfRel,
                 screenshotRelativePath: school.screenshotRelativePath ?? undefined,
-                payload: extractionPayload as object,
+                payload: snapshotPayload as object,
                 overallConfidence: meta.confidence,
                 extractedAt: new Date(),
               },
@@ -630,9 +627,9 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
                 udise,
                 sectionKey: "full_text",
                 rawText: extracted.text.slice(0, 500_000),
-                payload: { normalized, meta } as object,
+                payload: { normalized, meta, snapshotSchemaVersion: snapshotPayload.schemaVersion } as object,
                 confidence: meta.confidence,
-                extractorVersion: "1.0.0",
+                extractorVersion: REPORT_CARD_PARSER_VERSION,
                 warnings: meta.warnings,
               },
             });
@@ -682,7 +679,7 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
                 infra: refreshed.infra,
                 digital: refreshed.digital,
               };
-              const complete = computeProfileCompletenessFromSnapshot(snap);
+              const complete = calculateCompletenessFromSnapshot(snap);
               const pilot = computePilotSuitable(refreshed, complete);
               await tx.school.update({
                 where: { udise },
@@ -712,7 +709,7 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
 
         await fs.writeFile(
           path.join(paths.extractionsDir, `${udise}.json`),
-          JSON.stringify(extractionPayload, null, 2),
+          JSON.stringify(snapshotPayload, null, 2),
           "utf8",
         );
 

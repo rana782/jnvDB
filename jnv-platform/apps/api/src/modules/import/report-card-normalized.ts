@@ -36,6 +36,8 @@ export type ReportCardEnrolmentMinority = {
 export type ReportCardEnrolmentOthers = {
   cwsn: number | null;
   ews: number | null;
+  bpl: number | null;
+  repeater: number | null;
   otherCategories: number | null;
   total: number | null;
 };
@@ -71,6 +73,8 @@ export type ReportCardDigital = {
   tablets: number | null;
   printers: number | null;
   projectors: number | null;
+  /** Maps to `SchoolDigitalFacilities.smartClassTv`. */
+  smartClassTv: number | null;
 };
 
 /** Teaching staff summary; `null` = unknown / not extracted. */
@@ -105,6 +109,8 @@ export interface ReportCardNormalized {
 
 /** Parser output: normalized sections plus optional per-section scores (not flattened). */
 export type ReportCardParseResult = Partial<ReportCardNormalized> & {
+  /** Academic year string when present in the PDF (e.g. 2024-25). */
+  academicYear?: string | null;
   /** 0–1 confidence for `enrolmentSocial` */
   enrolmentSocialConfidence?: number;
   /** 0–1 confidence for `enrolmentMinority` (populate when parser supports this section) */
@@ -136,6 +142,8 @@ export const ENROLMENT_MINORITY_CATEGORY: Record<keyof ReportCardEnrolmentMinori
 export const ENROLMENT_OTHERS_CATEGORY: Record<keyof ReportCardEnrolmentOthers, string> = {
   cwsn: "CWSN",
   ews: "EWS",
+  bpl: "BPL",
+  repeater: "Repeater",
   otherCategories: "Other categories",
   total: "Total",
 };

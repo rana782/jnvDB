@@ -21,6 +21,7 @@ doc.on("data", (c) => chunks.push(c));
 doc.fontSize(11);
 const lines = [
   "UDISE : 11050300101",
+  "Academic Year : 2024-25",
   "School Name : Integration Test Vidyalaya",
   "State : Test State",
   "District : Test District",
@@ -52,6 +53,29 @@ const lines = [
   "17 : 49",
   "18 : 49",
   "Age Total : 445",
+  "Basic Facilities",
+  "Electricity Available : Yes",
+  "Drinking Water Available : Yes",
+  "Other Enrolment",
+  "BPL : 12",
+  "Repeater : 5",
+  "CWSN : 3",
+  "EWS : 42",
+  "Other categories : 8",
+  "Total : 70",
+  "Teaching Staff",
+  "Total Teachers : 28",
+  "Male Teachers : 16",
+  "Female Teachers : 12",
+  "Trained Teachers : 22",
+  "Untrained Teachers : 6",
+  "ICT / Digital Facilities",
+  "Desktops : 40",
+  "Laptops : 8",
+  "Tablets : 12",
+  "Printers : 6",
+  "Smart Class TV : 5",
+  "Projectors : 4",
 ];
 let y = 72;
 for (const l of lines) {
