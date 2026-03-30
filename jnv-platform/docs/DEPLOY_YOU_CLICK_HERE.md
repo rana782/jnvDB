@@ -37,13 +37,18 @@ git push origin master
 6. Open **`https://<your-service>.onrender.com/api/health`** — you should see JSON with `"ok": true`.
 7. **Environment → jnv-api → Environment**: add **`CORS_ORIGIN`** = your Vercel URL (step 3), e.g. `https://something.vercel.app` — **no trailing slash**. Save; trigger **Manual Deploy** if needed.
 
-**First-time login user (seed):** After a successful deploy, the API’s `schema.prisma` on Render is already **postgresql** (the build script switches it). In **jnv-api → Shell** (if your plan includes it), run:
+**First-time login user (seed)** — pick one:
 
-```bash
-cd apps/api && npx prisma db seed
-```
+**A) GitHub Actions (works on Render free tier, no Shell)** — workflow **Seed production database** (`.github/workflows/seed-production-database.yml`):
 
-If you do not have Shell, use Render’s Postgres **SQL** console or a local tool with the **external** `DATABASE_URL` only after temporarily switching `provider` to `postgresql` in `schema.prisma` on your PC (see [DATABASE_PROVIDERS.md](./DATABASE_PROVIDERS.md)) — Shell is much simpler when available.
+1. GitHub → **Settings → Secrets and variables → Actions → New repository secret**  
+   - **`PRODUCTION_DATABASE_URL`** = your Render Postgres **External** URL (`postgresql://…`).
+2. Optional: **`SEED_FOUNDER_PASSWORD`**, **`SEED_FOUNDER_ROLLCODE`** (if omitted, seed uses `founder` / `change-me-in-prod`).
+3. **Actions** → **Seed production database** → **Run workflow** → in **confirm** type **`SEED`** → **Run workflow**.
+
+**B) Render Shell** (paid / some plans): `cd apps/api && npx prisma db seed`
+
+**C) Your PC** with the external `DATABASE_URL` and temporarily `provider = "postgresql"` in `schema.prisma` — [DATABASE_PROVIDERS.md](./DATABASE_PROVIDERS.md).
 
 ---
 
@@ -79,7 +84,7 @@ In **Render → jnv-api → Settings → Build Command** you should have: `npm r
 | `/api/health` works | Browser, Render API URL |
 | `CORS_ORIGIN` = Vercel URL | Render → jnv-api → Environment |
 | `VITE_API_BASE_URL` = Render API origin | Vercel → Env |
-| Seeded founder user | `prisma db seed` on prod DB |
+| Seeded founder user | GitHub Action **Seed production database** or Shell / local `prisma db seed` |
 
 ---
 

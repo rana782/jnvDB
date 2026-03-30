@@ -99,8 +99,9 @@ async function main() {
     });
   }
 
-  const defaultPassword = process.env.SEED_FOUNDER_PASSWORD ?? "change-me-in-prod";
-  const rollcode = process.env.SEED_FOUNDER_ROLLCODE ?? "founder";
+  const defaultPassword =
+    (process.env.SEED_FOUNDER_PASSWORD ?? "").trim() || "change-me-in-prod";
+  const rollcode = (process.env.SEED_FOUNDER_ROLLCODE ?? "").trim() || "founder";
   const hash = await argon2.hash(defaultPassword);
 
   const superAdminRole = await prisma.role.findUniqueOrThrow({ where: { name: "super_admin" } });

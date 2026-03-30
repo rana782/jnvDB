@@ -1,0 +1,54 @@
+# One-time or occasional: seed roles + founder user on production Postgres (e.g. Render).
+# Render free tier has no Shell — run this from GitHub instead.
+#
+# Setup (once):
+#   Repo → Settings → Secrets and variables → Actions → New repository secret
+#   - PRODUCTION_DATABASE_URL = External Database URL from Render Postgres (postgresql://...)
+#
+# Optional secrets (omit entirely if you want defaults: rollcode founder / password change-me-in-prod):
+#   - SEED_FOUNDER_PASSWORD
+#   - SEED_FOUNDER_ROLLCODE
+#
+# Run: Actions → "Seed production database" → Run workflow → type SEED → Run workflow
+
+name: Seed production database
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type SEED to run (prevents mis-clicks)"
+        required: true
+
+jobs:
+  seed:
+    if: github.event.inputs.confirm == 'SEED'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: jnv-platform/package-lock.json
+
+      - name: Patch Prisma datasource to PostgreSQL
+        working-directory: jnv-platform
+        run: sed -i 's/provider = "sqlite"/provider = "postgresql"/' apps/api/prisma/schema.prisma
+
+      - name: Install dependencies
+        working-directory: jnv-platform
+        run: npm ci --include=dev
+
+      - name: Prisma generate
+        working-directory: jnv-platform
+        run: npm run db:generate -w @jnv/api
+
+      - name: Run Prisma seed
+        working-directory: jnv-platform/apps/api
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+          SEED_FOUNDER_PASSWORD: ${{ secrets.SEED_FOUNDER_PASSWORD }}
+          SEED_FOUNDER_ROLLCODE: ${{ secrets.SEED_FOUNDER_ROLLCODE }}
+        run: npx prisma db seed
