@@ -25,7 +25,9 @@ export const registerAuthRoutes: FastifyPluginAsync = async (app) => {
       path: "/",
       httpOnly: true,
       secure: env.COOKIE_SECURE,
-      sameSite: "lax",
+      // Frontend (Vercel) and API (Render) are different origins.
+      // For cross-site XHR/fetch, cookies generally require SameSite=None (and Secure=true).
+      sameSite: env.COOKIE_SECURE ? "none" : "lax",
       maxAge: 60 * 60 * 24 * 7,
     });
 
