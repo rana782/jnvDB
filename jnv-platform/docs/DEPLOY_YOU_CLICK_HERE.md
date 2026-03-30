@@ -61,9 +61,12 @@ Then go back to Render and set **`CORS_ORIGIN`** to the exact Vercel URL.
 
 ## If the build fails with “Exited with status 127”
 
-That usually means **`bash` was not found** on the build image. This repo uses **`npm run render-build`** (Node) instead—pull the latest `master`, or in **Render → jnv-api → Settings → Build Command** set:
+Common causes:
 
-`npm run render-build`
+1. **`bash` not found** — use the latest `master` (build uses `npm run render-build` / Node, not `bash`).
+2. **`prisma: not found`** — Render runs `npm ci` in production mode, which skipped **devDependencies** (where the Prisma CLI lives). Latest `master` uses **`npm ci --include=dev`** in the render build script so `prisma` and `tsc` install during the build.
+
+In **Render → jnv-api → Settings → Build Command** you should have: `npm run render-build`
 
 ---
 
