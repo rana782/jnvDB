@@ -89,6 +89,6 @@ Deploy the frontend as a Vite SPA from the **monorepo root** so `npm ci` uses `p
 3. Add **`VITE_API_BASE_URL`** = your public API origin (no trailing slash), e.g. `https://api.example.com`.
 4. Run the API elsewhere (Node + PostgreSQL). Set **`CORS_ORIGIN`** to your Vercel URL and **`COOKIE_SECURE=true`**.
 
-Step-by-step (GitHub push, API host, env vars): [docs/DEPLOY_FIRST_TIME.md](docs/DEPLOY_FIRST_TIME.md).
+Step-by-step (GitHub push, API host, env vars): [docs/DEPLOY_FIRST_TIME.md](docs/DEPLOY_FIRST_TIME.md). **Render Blueprint (minimal clicking):** [docs/DEPLOY_YOU_CLICK_HERE.md](docs/DEPLOY_YOU_CLICK_HERE.md) — use `render.yaml` at the **parent repo root** (`learn_git/`, next to `jnv-platform/`).
 
 SPA rewrites send all routes to `index.html`, so deep links like `/schools/12345678901` work after refresh.

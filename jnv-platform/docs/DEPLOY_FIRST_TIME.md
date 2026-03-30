@@ -31,7 +31,9 @@ If `git push` asks for a password, use a **GitHub Personal Access Token** (not y
 
 ## Part B — Deploy the API (PostgreSQL + Node)
 
-Pick one provider you are comfortable with (Railway, Render, Fly.io, etc.). Concept is the same everywhere.
+**Fastest on Render (free):** put `render.yaml` at your **Git repo root** and in the Render dashboard choose **New → Blueprint** (see [DEPLOY_YOU_CLICK_HERE.md](./DEPLOY_YOU_CLICK_HERE.md)).
+
+Or pick any provider (Railway, Render manual service, Fly.io, etc.). Concept is the same everywhere.
 
 ### 1. Create PostgreSQL
 
