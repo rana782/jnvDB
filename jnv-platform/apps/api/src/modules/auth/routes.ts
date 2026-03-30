@@ -21,13 +21,19 @@ export const registerAuthRoutes: FastifyPluginAsync = async (app) => {
       roles: user.roles,
     } satisfies JwtPayload);
 
+    // In production the frontend and API are typically different HTTPS origins.
+    // Browsers will reject cookies for cross-site requests unless:
+    // - `Secure` is true
+    // - `SameSite=None`
+    const isProdCookie = env.NODE_ENV === "production" || env.COOKIE_SECURE;
+
     reply.setCookie("jnv_token", token, {
       path: "/",
       httpOnly: true,
-      secure: env.COOKIE_SECURE,
+      secure: isProdCookie,
       // Frontend (Vercel) and API (Render) are different origins.
       // For cross-site XHR/fetch, cookies generally require SameSite=None (and Secure=true).
-      sameSite: env.COOKIE_SECURE ? "none" : "lax",
+      sameSite: isProdCookie ? "none" : "lax",
       maxAge: 60 * 60 * 24 * 7,
     });
 
