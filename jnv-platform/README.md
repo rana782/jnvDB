@@ -84,8 +84,8 @@ cd apps/web && npx playwright install && npm run e2e
 
 Deploy the frontend as a Vite SPA from the **monorepo root** so `npm ci` uses `package-lock.json`.
 
-1. In Vercel, set **Root Directory** to **`jnv-platform`** (not `apps/web`).
-2. Use `jnv-platform/vercel.json`: `npm ci`, `npm run build -w @jnv/web`, output **`apps/web/dist`**.
+1. In Vercel, either leave **Root Directory** empty (repo root) and use the root **`vercel.json`** next to `jnv-platform/`, **or** set **Root Directory** to **`jnv-platform`** and use `jnv-platform/vercel.json`. Both run install where **`package-lock.json`** exists (`npm ci --include=dev` so Vite/TypeScript install).
+2. Build output is **`jnv-platform/apps/web/dist`** (from repo root) or **`apps/web/dist`** (when Root Directory is `jnv-platform`).
 3. Add **`VITE_API_BASE_URL`** = your public API origin (no trailing slash), e.g. `https://api.example.com`.
 4. Run the API elsewhere (Node + PostgreSQL). Set **`CORS_ORIGIN`** to your Vercel URL and **`COOKIE_SECURE=true`**.
 
