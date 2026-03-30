@@ -4,21 +4,15 @@ import { createSearchParams, useSearchParams } from "react-router-dom";
 import { PipelineBadge } from "../components/PipelineBadge";
 import { apiJson } from "../lib/api";
 import { PIPELINE_STATUS_ORDER } from "../lib/pipeline-status";
-import type { CompareSchoolRow, CompareSchoolsResponse } from "../types/school-api";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import type { CompareSchoolRow, CompareSchoolsResponse, SchoolListResponse } from "../types/school-api";
 
 const PIPELINE_RANK: Record<string, number> = Object.fromEntries(
   PIPELINE_STATUS_ORDER.map((s, i) => [s, i]),
 );
 
-const PARSING_RANK: Record<string, number> = {
-  FAILED: 0,
-  PENDING: 1,
-  PARTIAL: 2,
-  COMPLETE: 3,
-};
-
 const BEST_CELL =
-  "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.15)]";
+  "bg-emerald-50 ring-1 ring-emerald-200 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.18)]";
 
 function fetchCompare(udises: string[]): Promise<CompareSchoolsResponse> {
   const qs = new URLSearchParams();
@@ -26,8 +20,13 @@ function fetchCompare(udises: string[]): Promise<CompareSchoolsResponse> {
   return apiJson<CompareSchoolsResponse>(`/api/schools/compare?${qs.toString()}`);
 }
 
-function customRevenue(s: CompareSchoolRow): { monthly: number; annual: number } {
-  const c = s.revenueScenarios?.find((r) => r.kind === "CUSTOM");
+function searchSchools(q: string): Promise<SchoolListResponse> {
+  const qs = new URLSearchParams({ page: "1", pageSize: "8", q });
+  return apiJson<SchoolListResponse>(`/api/schools?${qs.toString()}`);
+}
+
+function revenueByKind(s: CompareSchoolRow, kind: "LOW" | "MEDIUM" | "HIGH"): { monthly: number; annual: number } {
+  const c = s.revenueScenarios?.find((r) => r.kind === kind);
   return {
     monthly: typeof c?.monthlyRevenue === "number" ? c.monthlyRevenue : NaN,
     annual: typeof c?.annualRevenue === "number" ? c.annualRevenue : NaN,
@@ -78,7 +77,7 @@ function fmtNum(n: number | null | undefined, suffix = ""): string {
 
 function fmtMoney(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return "—";
-  return `₹${Math.round(n).toLocaleString()}`;
+  return `₹${Math.round(n).toLocaleString("en-IN")}`;
 }
 
 function boolLabel(v: boolean | null | undefined): string {
@@ -94,7 +93,6 @@ type RowDef = {
 
 function CompareTable({ schools }: { schools: CompareSchoolRow[] }) {
   const n = schools.length;
-  const infra = (s: CompareSchoolRow) => s.sections?.infra;
   const digital = (s: CompareSchoolRow) => s.sections?.digital;
 
   const rows = useMemo((): { section: string; rows: RowDef[] }[] => {
@@ -158,13 +156,6 @@ function CompareTable({ schools }: { schools: CompareSchoolRow[] }) {
       "max",
       (v) => fmtNum(v),
     );
-    pushNumeric(
-      "Students",
-      "Teachers",
-      schools.map((s) => s.enrolmentHeadcount.totalTeachers),
-      "max",
-      (v) => fmtNum(v),
-    );
 
     // --- Core infra (school flags) ---
     const facKeys: { key: string; label: string }[] = [
@@ -182,36 +173,6 @@ function CompareTable({ schools }: { schools: CompareSchoolRow[] }) {
         schools.map((s) => s.facilities?.[key] as boolean | null | undefined),
       );
     }
-
-    pushBool(
-      "Infra (detail)",
-      "Pucca building",
-      schools.map((s) => infra(s)?.puccaBuilding),
-    );
-    pushNumeric(
-      "Infra (detail)",
-      "Functional toilets (B)",
-      schools.map((s) => infra(s)?.functionalToiletsB ?? null),
-      "max",
-      (v) => fmtNum(v),
-    );
-    pushNumeric(
-      "Infra (detail)",
-      "Functional toilets (G)",
-      schools.map((s) => infra(s)?.functionalToiletsG ?? null),
-      "max",
-      (v) => fmtNum(v),
-    );
-    pushBool(
-      "Infra (detail)",
-      "Ramps",
-      schools.map((s) => infra(s)?.rampsAvailable),
-    );
-    pushBool(
-      "Infra (detail)",
-      "Medical checkup",
-      schools.map((s) => infra(s)?.medicalCheckup),
-    );
 
     pushNumeric(
       "Digital",
@@ -265,51 +226,60 @@ function CompareTable({ schools }: { schools: CompareSchoolRow[] }) {
       (v) => fmtNum(v),
     );
 
-    // --- Readiness ---
-    pushNumeric(
-      "Readiness",
-      "Profile completeness %",
-      schools.map((s) => s.profileCompletenessPct),
-      "max",
-      (v) => (v == null || !Number.isFinite(v) ? "—" : `${Math.round(v)}%`),
-    );
-    pushNumeric(
-      "Readiness",
-      "Extraction confidence %",
-      schools.map((s) =>
-        s.provenance.overallExtractionConfidence != null
-          ? s.provenance.overallExtractionConfidence * 100
-          : null,
-      ),
-      "max",
-      (v) => (v == null || !Number.isFinite(v) ? "—" : `${Math.round(v)}%`),
-    );
-    pushBool(
-      "Readiness",
-      "Pilot suitable",
-      schools.map((s) => s.pilotSuitable),
-    );
-
-    // --- Revenue (CUSTOM stored scenario) ---
-    const monthly = schools.map((s) => customRevenue(s).monthly);
-    const annual = schools.map((s) => customRevenue(s).annual);
-    const bestM = bestMaxIndices(monthly);
-    const bestA = bestMaxIndices(annual);
+    // --- Revenue (all stored scenarios) ---
+    const lowM = schools.map((s) => revenueByKind(s, "LOW").monthly);
+    const lowA = schools.map((s) => revenueByKind(s, "LOW").annual);
+    const medM = schools.map((s) => revenueByKind(s, "MEDIUM").monthly);
+    const medA = schools.map((s) => revenueByKind(s, "MEDIUM").annual);
+    const highM = schools.map((s) => revenueByKind(s, "HIGH").monthly);
+    const highA = schools.map((s) => revenueByKind(s, "HIGH").annual);
     out.push({
-      section: "Revenue (CUSTOM scenario)",
+      section: "Revenue scenarios",
       rows: [
         {
-          label: "Monthly",
-          cells: monthly.map((v, i) => (
-            <span key={i} className={bestM.has(i) ? `rounded px-1.5 py-0.5 ${BEST_CELL}` : ""}>
+          label: "Low (monthly)",
+          cells: lowM.map((v, i) => (
+            <span key={i} className={bestMaxIndices(lowM).has(i) ? `rounded px-1.5 py-0.5 ${BEST_CELL} text-emerald-700` : "text-emerald-700"}>
               {fmtMoney(v)}
             </span>
           )),
         },
         {
-          label: "Annual",
-          cells: annual.map((v, i) => (
-            <span key={i} className={bestA.has(i) ? `rounded px-1.5 py-0.5 ${BEST_CELL}` : ""}>
+          label: "Low (annual)",
+          cells: lowA.map((v, i) => (
+            <span key={i} className={bestMaxIndices(lowA).has(i) ? `rounded px-1.5 py-0.5 ${BEST_CELL} text-emerald-700` : "text-emerald-700"}>
+              {fmtMoney(v)}
+            </span>
+          )),
+        },
+        {
+          label: "Medium (monthly)",
+          cells: medM.map((v, i) => (
+            <span key={i} className={bestMaxIndices(medM).has(i) ? `rounded px-1.5 py-0.5 ${BEST_CELL} text-yellow-700` : "text-yellow-700"}>
+              {fmtMoney(v)}
+            </span>
+          )),
+        },
+        {
+          label: "Medium (annual)",
+          cells: medA.map((v, i) => (
+            <span key={i} className={bestMaxIndices(medA).has(i) ? `rounded px-1.5 py-0.5 ${BEST_CELL} text-yellow-700` : "text-yellow-700"}>
+              {fmtMoney(v)}
+            </span>
+          )),
+        },
+        {
+          label: "High (monthly)",
+          cells: highM.map((v, i) => (
+            <span key={i} className={bestMaxIndices(highM).has(i) ? `rounded px-1.5 py-0.5 ${BEST_CELL} text-rose-800` : "text-rose-800"}>
+              {fmtMoney(v)}
+            </span>
+          )),
+        },
+        {
+          label: "High (annual)",
+          cells: highA.map((v, i) => (
+            <span key={i} className={bestMaxIndices(highA).has(i) ? `rounded px-1.5 py-0.5 ${BEST_CELL} text-rose-800` : "text-rose-800"}>
               {fmtMoney(v)}
             </span>
           )),
@@ -318,8 +288,6 @@ function CompareTable({ schools }: { schools: CompareSchoolRow[] }) {
     });
 
     // --- Completion ---
-    const parseStatuses = schools.map((s) => s.provenance.parsingStatus ?? "");
-    const bestParse = bestRankIndices(parseStatuses, PARSING_RANK);
     const bestPipeline = bestRankIndices(
       schools.map((s) => s.pipelineStatus),
       PIPELINE_RANK,
@@ -338,14 +306,6 @@ function CompareTable({ schools }: { schools: CompareSchoolRow[] }) {
             </span>
           )),
         },
-        {
-          label: "Parsing status",
-          cells: parseStatuses.map((v, i) => (
-            <span key={i} className={bestParse.has(i) ? `rounded px-1.5 py-0.5 ${BEST_CELL}` : ""}>
-              {v || "—"}
-            </span>
-          )),
-        },
       ],
     });
 
@@ -353,11 +313,11 @@ function CompareTable({ schools }: { schools: CompareSchoolRow[] }) {
   }, [schools]);
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-line bg-card shadow-sm">
+    <div className="premium-panel overflow-x-auto rounded-xl premium-ring">
       <table className="w-full min-w-[720px] border-collapse text-sm">
         <thead>
-          <tr className="border-b border-line bg-canvas text-left">
-            <th className="sticky left-0 z-20 min-w-[10rem] bg-canvas px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted">
+          <tr className="border-b border-line bg-surface-3 text-left">
+            <th className="sticky left-0 z-20 min-w-[10rem] bg-surface-3 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted">
               Metric
             </th>
             {schools.map((s) => (
@@ -398,9 +358,9 @@ function CompareTable({ schools }: { schools: CompareSchoolRow[] }) {
           ))}
         </tbody>
       </table>
-      <p className="border-t border-line bg-canvas px-3 py-2 text-xs text-muted">
-        Highlighted cells are &quot;best&quot; in the row: higher counts and percentages, more advanced pipeline /
-        parsing status, and facility flags when true. Revenue uses the stored CUSTOM scenario per school.
+      <p className="border-t border-line bg-surface-3 px-3 py-2 text-xs text-muted">
+        Highlighted cells are &quot;best&quot; in the row: higher counts, stronger facility/digital coverage, and more
+        advanced pipeline status. Revenue rows show LOW, MEDIUM, and HIGH scenarios.
       </p>
     </div>
   );
@@ -408,7 +368,8 @@ function CompareTable({ schools }: { schools: CompareSchoolRow[] }) {
 
 export function ComparePage() {
   const [params, setParams] = useSearchParams();
-  const [draftUdise, setDraftUdise] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const debouncedSearch = useDebouncedValue(searchText.trim(), 220);
 
   const udises = useMemo(() => {
     const raw = params.getAll("u");
@@ -422,7 +383,7 @@ export function ComparePage() {
       uniq.push(u);
       if (uniq.length >= 4) break;
     }
-    return uniq.length >= 2 ? uniq : [];
+    return uniq;
   }, [params]);
 
   const setUdises = (next: string[]) => {
@@ -436,67 +397,86 @@ export function ComparePage() {
     queryFn: () => fetchCompare(udises),
     enabled: udises.length >= 2,
   });
-
-  function addFromInput() {
-    const u = draftUdise.replace(/\D/g, "").slice(0, 11);
-    if (!/^\d{11}$/.test(u)) return;
-    const next = [...udises];
-    if (next.includes(u)) {
-      setDraftUdise("");
-      return;
-    }
-    if (next.length >= 4) return;
-    next.push(u);
-    setDraftUdise("");
-    setUdises(next);
-  }
+  const schoolSearchQ = useQuery({
+    queryKey: ["compare-school-search", debouncedSearch],
+    queryFn: () => searchSchools(debouncedSearch),
+    enabled: debouncedSearch.length >= 2 && udises.length < 4,
+    staleTime: 30_000,
+  });
 
   function removeUdise(u: string) {
     setUdises(udises.filter((x) => x !== u));
   }
 
+  function addUdise(u: string) {
+    if (!/^\d{11}$/.test(u)) return;
+    if (udises.includes(u) || udises.length >= 4) return;
+    setUdises([...udises, u]);
+    setSearchText("");
+  }
+
+  const searchItems = (schoolSearchQ.data?.items ?? []).filter((s) => !udises.includes(s.udise));
+
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-ink">Compare schools</h1>
+        <h1 className="text-2xl font-semibold premium-gradient-text">Compare schools</h1>
         <p className="text-sm text-muted">
-          Select 2–4 schools. Use the URL (<code className="rounded bg-canvas px-1 py-0.5 font-mono text-accent">?u=</code> repeated) or add UDISE codes
-          below. Side-by-side metrics; best values per row are highlighted.
+          Select 2–4 schools from search results. Side-by-side core metrics are shown with best values highlighted.
         </p>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-line bg-card p-4 shadow-sm">
-        <label className="text-xs text-muted">
-          Add UDISE (11 digits)
-          <input
-            className="mt-1 block w-44 rounded-md border border-line bg-card px-2 py-1.5 font-mono text-sm text-ink placeholder:text-muted"
-            value={draftUdise}
-            onChange={(e) => setDraftUdise(e.target.value.replace(/\D/g, "").slice(0, 11))}
-            placeholder="27200100101"
-            maxLength={11}
-          />
-        </label>
-        <button
-          type="button"
-          className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-white transition-colors duration-150 hover:bg-accent-hover disabled:opacity-40"
-          disabled={draftUdise.length !== 11 || udises.length >= 4 || udises.includes(draftUdise)}
-          onClick={addFromInput}
-        >
-          Add
-        </button>
-        <button
-          type="button"
-          className="rounded-md border border-line px-3 py-2 text-sm text-ink transition-colors duration-100 hover:bg-canvas"
-          onClick={() => {
-            setUdises([]);
-            setDraftUdise("");
-          }}
-        >
-          Clear all
-        </button>
-        <span className="text-xs text-muted">
-          {udises.length} / 4 selected · minimum 2 to load
-        </span>
+      <div className="premium-panel rounded-xl p-4 premium-ring">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="min-w-[260px] flex-1 text-xs text-muted">
+            Search schools (name, district, UDISE)
+            <input
+              className="mt-1 block w-full rounded-md border border-line bg-surface-3 px-3 py-2.5 text-sm text-ink placeholder:text-muted sm:py-2"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="Type school name, district, or 11-digit UDISE"
+            />
+          </label>
+          <button
+            type="button"
+            className="rounded-md border border-line bg-surface-3 px-3 py-2.5 text-sm text-ink transition-colors duration-100 hover:bg-surface-4 sm:py-2"
+            onClick={() => {
+              setUdises([]);
+              setSearchText("");
+            }}
+          >
+            Clear all
+          </button>
+          <span className="text-xs text-muted">{udises.length} / 4 selected · minimum 2 to load</span>
+        </div>
+        {udises.length >= 4 ? (
+          <p className="mt-2 text-xs text-muted">Maximum 4 schools selected. Remove one to add another.</p>
+        ) : null}
+        {debouncedSearch.length >= 2 ? (
+          <div className="mt-2 max-h-56 overflow-y-auto rounded-md border border-line bg-surface-3/50">
+            {schoolSearchQ.isPending ? (
+              <div className="px-3 py-2 text-xs text-muted">Searching…</div>
+            ) : searchItems.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-muted">No schools found.</div>
+            ) : (
+              searchItems.map((s) => (
+                <button
+                  key={s.udise}
+                  type="button"
+                  className="block w-full border-b border-line px-3 py-3 text-left last:border-b-0 hover:bg-surface-4 sm:py-2"
+                  onClick={() => addUdise(s.udise)}
+                >
+                  <div className="font-medium text-ink">{s.schoolName}</div>
+                  <div className="text-xs text-muted">
+                    {s.udise} · {s.geographicDistrict ?? "—"}, {s.geographicState ?? "—"}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-muted">Enter at least 2 characters to search.</p>
+        )}
       </div>
 
       {udises.length > 0 && udises.length < 2 ? (
@@ -508,12 +488,12 @@ export function ComparePage() {
           {udises.map((u) => (
             <span
               key={u}
-              className="inline-flex items-center gap-2 rounded-full border border-line bg-canvas px-3 py-1 font-mono text-xs text-accent"
+              className="inline-flex items-center gap-2 rounded-full border border-line bg-surface-3 px-3 py-1 font-mono text-xs text-accent"
             >
               {u}
               <button
                 type="button"
-                className="text-muted transition-colors duration-100 hover:text-warning"
+                className="rounded px-1 py-0.5 text-base leading-none text-muted transition-colors duration-100 hover:text-warning"
                 title="Remove from compare"
                 onClick={() => removeUdise(u)}
               >
@@ -525,7 +505,7 @@ export function ComparePage() {
       ) : null}
 
       {q.isError ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="rounded-xl border border-amber-400/30 bg-amber-500/15 p-3 text-sm text-amber-200">
           Could not load comparison from the API.
         </div>
       ) : null}

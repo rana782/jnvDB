@@ -1,6 +1,26 @@
 import type { ReportCardNormalized, ReportCardParseResult } from "../report-card-normalized.js";
 import { num, str } from "./text-helpers.js";
 
+function pickLargestMatch(text: string, pattern: RegExp): number | null {
+  let best: number | null = null;
+  for (const m of text.matchAll(pattern)) {
+    const n = num(m[1]);
+    if (n == null) continue;
+    if (best == null || n > best) best = n;
+  }
+  return best;
+}
+
+function captureBoundedField(text: string, label: string): string {
+  const re = new RegExp(`${label}\\s*[:\\-]?\\s*([^\\n]{1,160})`, "i");
+  const m = text.match(re)?.[1];
+  if (!m) return "";
+  return str(m)
+    .split(/\b(?:district|state|udise|academic\s*year|students?|boys?|girls?)\b/i)[0]!
+    .replace(/[|]/g, " ")
+    .trim();
+}
+
 /** Academic year like 2024-25 or 2024-2025 when labeled in the report card. */
 export function extractAcademicYearFromReportCard(text: string): string | null {
   const m =
@@ -15,14 +35,11 @@ export function extractAcademicYearFromReportCard(text: string): string | null {
 export function extractStudentHeadcountFromReportCard(text: string):
   | ReportCardNormalized["students"]
   | undefined {
-  const ts =
-    text.match(/\bTotal\s+Students?\b\s*[:\s]*(\d[\d,]*)/i) ||
-    text.match(/\bTotal\s*(?:Students?|Enrolment)\b\s*[:\s]*(\d[\d,]*)/i);
-  const tb = text.match(/\bBoys?\b\s*[:\s]*(\d[\d,]*)/i);
-  const tg = text.match(/\bGirls?\b\s*[:\s]*(\d[\d,]*)/i);
-  const totalStudents = num(ts?.[1]);
-  const totalBoys = num(tb?.[1]);
-  const totalGirls = num(tg?.[1]);
+  const totalStudents =
+    pickLargestMatch(text, /\bTotal\s+Students?\b\s*[:\s-]*(\d[\d,]*)/gi) ??
+    pickLargestMatch(text, /\bTotal\s*(?:Students?|Enrolment)\b\s*[:\s-]*(\d[\d,]*)/gi);
+  const totalBoys = pickLargestMatch(text, /\bBoys?\b\s*[:\s-]*(\d[\d,]*)/gi);
+  const totalGirls = pickLargestMatch(text, /\bGirls?\b\s*[:\s-]*(\d[\d,]*)/gi);
   if (totalStudents == null && totalBoys == null && totalGirls == null) return undefined;
   return {
     total: totalStudents ?? (totalBoys ?? 0) + (totalGirls ?? 0),
@@ -42,14 +59,14 @@ export function parseReportCardTextLegacy(text: string, fallbackUdise: string): 
     out.udise = fallbackUdise;
   }
 
-  const nameM = text.match(/School Name[:\s]+([^\n]+)/i);
-  const stM = text.match(/State[:\s]+([^\n]+)/i);
-  const distM = text.match(/District[:\s]+([^\n]+)/i);
-  if (nameM || stM || distM) {
+  const name = captureBoundedField(text, "School\\s+Name");
+  const state = captureBoundedField(text, "State");
+  const district = captureBoundedField(text, "District");
+  if (name || state || district) {
     out.schoolProfile = {
-      name: str(nameM?.[1]).slice(0, 200),
-      state: str(stM?.[1]).slice(0, 120),
-      district: str(distM?.[1]).slice(0, 120),
+      name: name.slice(0, 200),
+      state: state.slice(0, 120),
+      district: district.slice(0, 120),
     };
   }
 

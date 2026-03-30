@@ -10,7 +10,7 @@ export const schoolDetailInclude = {
   enrolmentMinority: true,
   enrolmentOthers: true,
   enrolmentAge: true,
-  revenueScenarios: true,
+  revenueScenarios: { orderBy: { computedAt: "desc" as const } },
   rawExtractions: { orderBy: { createdAt: "desc" as const }, take: 5 },
   notes: { orderBy: { updatedAt: "desc" as const } },
   progressEvents: { orderBy: { createdAt: "desc" as const }, take: 20 },
@@ -23,7 +23,11 @@ export type SchoolDetailRow = Prisma.SchoolGetPayload<{ include: typeof schoolDe
 export const schoolListInclude = {
   state: { include: { region: true } },
   district: true,
-  revenueScenarios: { where: { kind: "CUSTOM" as const }, take: 1 },
+  revenueScenarios: {
+    where: { kind: { in: ["LOW", "MEDIUM", "HIGH"] as const } },
+    orderBy: { computedAt: "desc" as const },
+    select: { kind: true, monthlyRevenue: true, annualRevenue: true },
+  },
 } satisfies Prisma.SchoolInclude;
 
 export type SchoolListRow = Prisma.SchoolGetPayload<{ include: typeof schoolListInclude }>;
@@ -39,7 +43,7 @@ export const schoolCompareInclude = {
   enrolmentMinority: true,
   enrolmentOthers: true,
   enrolmentAge: true,
-  revenueScenarios: true,
+  revenueScenarios: { orderBy: { computedAt: "desc" as const } },
   progressEvents: { orderBy: { createdAt: "desc" as const }, take: 20 },
 } satisfies Prisma.SchoolInclude;
 
@@ -72,6 +76,8 @@ export type SchoolListItemDto = {
   schoolName: string;
   geographicState: string | null;
   geographicDistrict: string | null;
+  latitude: number | null;
+  longitude: number | null;
   totalStudents: number | null;
   totalBoys: number | null;
   totalGirls: number | null;
@@ -79,7 +85,13 @@ export type SchoolListItemDto = {
   pipelineStatus: string;
   parsingStatus: string;
   regionCode: string | null;
+  regionName: string | null;
   stateName: string | null;
+  revenueByScenario: {
+    low: { monthly: number | null; annual: number | null };
+    medium: { monthly: number | null; annual: number | null };
+    high: { monthly: number | null; annual: number | null };
+  };
   provenance: SchoolProvenanceDto;
 };
 
@@ -266,12 +278,83 @@ function baseProvenance(s: SchoolDetailRow | SchoolListRow): SchoolProvenanceDto
   };
 }
 
+const REGION_NAME_RE =
+  /\b(bhopal|patna|lucknow|jaipur|chandigarh|shillong|hyderabad|pune)\b/i;
+
+function normSpaces(v: string | null | undefined): string {
+  return (v ?? "").replace(/\s+/g, " ").trim();
+}
+
+function districtFromSchoolName(name: string | null | undefined): string | null {
+  const n = normSpaces(name);
+  if (!n) return null;
+  const m = n.match(/jawahar\s+navodaya\s+vidyalaya\s+(.+)$/i);
+  if (!m?.[1]) return null;
+  const parts = normSpaces(m[1])
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (!parts.length) return null;
+  const first = parts[0] ?? "";
+  const last = parts[parts.length - 1] ?? first;
+  const picked = REGION_NAME_RE.test(first) && parts.length >= 2 ? last : first;
+  if (!picked || picked.length < 2 || /^\d{11}$/.test(picked)) return null;
+  return picked;
+}
+
+function sanitizeDistrict(
+  rawDistrict: string | null | undefined,
+  districtRelName: string | null | undefined,
+  schoolName: string | null | undefined,
+): string | null {
+  const raw = normSpaces(rawDistrict);
+  const rel = normSpaces(districtRelName);
+  const isBad = (v: string) =>
+    !v ||
+    /^\d{11}$/.test(v) ||
+    /region|office|social|category|cluster|pincode|block|rural|urban|state/i.test(v) ||
+    REGION_NAME_RE.test(v);
+  if (raw && !isBad(raw)) return raw;
+  if (rel && !isBad(rel)) return rel;
+  return districtFromSchoolName(schoolName);
+}
+
+function sanitizeSchoolName(rawName: string | null | undefined, cleanedDistrict: string | null): string {
+  const raw = normSpaces(rawName);
+  if (!raw && cleanedDistrict) return `Jawahar Navodaya Vidyalaya ${cleanedDistrict}`;
+  if (!raw) return "Jawahar Navodaya Vidyalaya";
+
+  const isJnv = /^jawahar\s+navodaya\s+vidyalaya\b/i.test(raw);
+  if (!isJnv && cleanedDistrict) return `Jawahar Navodaya Vidyalaya ${cleanedDistrict}`;
+  if (!cleanedDistrict) return raw;
+
+  const tail = raw.replace(/^jawahar\s+navodaya\s+vidyalaya\b\s*/i, "").trim();
+  const tailIsBad =
+    !tail ||
+    tail.length < 3 ||
+    REGION_NAME_RE.test(tail) ||
+    /\bregion|office|social|category|cluster|pincode|block|rural|urban\b/i.test(tail);
+  if (tailIsBad) return `Jawahar Navodaya Vidyalaya ${cleanedDistrict}`;
+  return raw;
+}
+
 export function toSchoolListItem(s: SchoolListRow): SchoolListItemDto {
+  const cleanedDistrict = sanitizeDistrict(s.geographicDistrict, s.district?.name ?? null, s.schoolName);
+  const cleanedSchoolName = sanitizeSchoolName(s.schoolName, cleanedDistrict);
+  const latestByKind = new Map<string, { monthlyRevenue: number | null; annualRevenue: number | null }>();
+  for (const r of s.revenueScenarios ?? []) {
+    const k = String(r.kind ?? "");
+    if (!latestByKind.has(k)) {
+      latestByKind.set(k, { monthlyRevenue: r.monthlyRevenue ?? null, annualRevenue: r.annualRevenue ?? null });
+    }
+  }
   return {
     udise: s.udise,
-    schoolName: s.schoolName,
-    geographicState: s.geographicState ?? null,
-    geographicDistrict: s.geographicDistrict ?? null,
+    schoolName: cleanedSchoolName,
+    geographicState: s.geographicState ?? s.state?.name ?? s.apiStateName ?? "Unknown",
+    geographicDistrict: cleanedDistrict,
+    latitude: s.latitude ?? null,
+    longitude: s.longitude ?? null,
     totalStudents: s.totalStudents ?? null,
     totalBoys: s.totalBoys ?? null,
     totalGirls: s.totalGirls ?? null,
@@ -279,7 +362,22 @@ export function toSchoolListItem(s: SchoolListRow): SchoolListItemDto {
     pipelineStatus: s.pipelineStatus,
     parsingStatus: s.parsingStatus,
     regionCode: s.state?.region?.code ?? null,
+    regionName: s.state?.region?.name ?? null,
     stateName: s.state?.name ?? null,
+    revenueByScenario: {
+      low: {
+        monthly: latestByKind.get("LOW")?.monthlyRevenue ?? null,
+        annual: latestByKind.get("LOW")?.annualRevenue ?? null,
+      },
+      medium: {
+        monthly: latestByKind.get("MEDIUM")?.monthlyRevenue ?? null,
+        annual: latestByKind.get("MEDIUM")?.annualRevenue ?? null,
+      },
+      high: {
+        monthly: latestByKind.get("HIGH")?.monthlyRevenue ?? null,
+        annual: latestByKind.get("HIGH")?.annualRevenue ?? null,
+      },
+    },
     provenance: baseProvenance(s),
   };
 }
@@ -392,20 +490,12 @@ export function toSchoolCanonical(s: SchoolDetailRow): SchoolCanonicalDto {
 /** GET /api/schools/:udise — all fields from DB via `getSchoolDetailRow`; no re-parsing. */
 export function toSchoolDetailApiResponse(s: SchoolDetailRow): SchoolDetailApiResponse {
   const canonical = toSchoolCanonical(s);
-  const {
-    enrolmentSocial: _cSoc,
-    enrolmentMinority: _cMin,
-    enrolmentOthers: _cOth,
-    enrolmentAge: _cAge,
-    ...chartSeries
-  } = canonical.chartSeries;
-  const {
-    enrolmentSocial: _sSoc,
-    enrolmentMinority: _sMin,
-    enrolmentOthers: _sOth,
-    enrolmentAge: _sAge,
-    ...sections
-  } = canonical.sections;
+  const chartSeries = { teachers: canonical.chartSeries.teachers };
+  const sections = {
+    infra: canonical.sections.infra,
+    digital: canonical.sections.digital,
+    teachers: canonical.sections.teachers,
+  };
   return {
     school: { ...canonical, sections, chartSeries },
     enrolmentSocial: toCategoryChartRows(s.enrolmentSocial),

@@ -3,7 +3,14 @@ import path from "node:path";
 import crypto from "node:crypto";
 import type { ScrapedDataPaths } from "../../config/paths.js";
 import { toRepoRelative } from "../../config/paths.js";
+import { loadEnv } from "../../config/env.js";
+import { buildPdfInventory, type PdfInventory } from "./pdf-inventory.js";
+import {
+  loadBulkImportCheckpoint,
+  writeBulkImportCheckpoint,
+} from "./import-checkpoint.js";
 import { getPrisma } from "../../shared/prisma.js";
+import { canonicalizeStateDisplay } from "../../shared/geo-normalize.js";
 import { normalizeUdise } from "../../shared/udise.js";
 import {
   ageHasData,
@@ -17,7 +24,10 @@ import {
   teachersHasData,
 } from "./pdf-extract.js";
 import { buildReportCardSnapshotPayload } from "./report-card-extraction-payload.js";
-import { REPORT_CARD_PARSER_VERSION } from "./parser/constants.js";
+import {
+  PARSING_COMPLETE_CONFIDENCE_THRESHOLD,
+  REPORT_CARD_PARSER_VERSION,
+} from "./parser/constants.js";
 import type { ReportCardNormalized } from "./report-card-normalized.js";
 import {
   ENROLMENT_AGE_BAND,
@@ -26,7 +36,7 @@ import {
 } from "./report-card-normalized.js";
 import { computePilotSuitable, type ProfileCompletenessSnapshot } from "../analytics/derived-metrics.js";
 import { calculateCompletenessFromSnapshot } from "./completeness.js";
-import { calculateRevenue, scenarioPresets } from "../analytics/revenue-calculator.js";
+import { scenarioPresets } from "../analytics/revenue-calculator.js";
 import { logger } from "../../shared/logger.js";
 import type { ImportJobStatus, Prisma } from "@prisma/client";
 import { refreshMapAggregates } from "../map/map-rollup.service.js";
@@ -48,6 +58,39 @@ export type SchoolsJsonRow = {
   hm_email?: string;
   hm_mobile?: string;
 };
+
+function parseStrengthScore(p: ReturnType<typeof parseReportCardText>): number {
+  let score = 0;
+  const s = p.students;
+  if (s && (s.total > 0 || s.boys > 0 || s.girls > 0)) score += 3;
+  if ((p.enrolmentSocial?.total ?? 0) > 0) score += 3;
+  if ((p.enrolmentAge?.total ?? 0) > 0) score += 2;
+  if ((p.enrolmentMinority?.total ?? 0) > 0) score += 1;
+  if ((p.enrolmentOthers?.total ?? 0) > 0) score += 1;
+  return score;
+}
+
+function looksWeakForKpi(p: ReturnType<typeof parseReportCardText>): boolean {
+  return parseStrengthScore(p) === 0;
+}
+
+const KV_MARKER_RE = /\b(?:kendriya\s+vidyalaya|kvs\b|vidyalaya\s+sangathan)\b/i;
+
+function looksLikeKvInstitution(rawText: string, parsedSchoolName?: string | null): boolean {
+  const name = (parsedSchoolName ?? "").replace(/\s+/g, " ").trim();
+  if (name && KV_MARKER_RE.test(name)) return true;
+  const header = rawText
+    .split(/\r?\n/)
+    .slice(0, 40)
+    .join("\n")
+    .replace(/\s+/g, " ")
+    .trim();
+  return KV_MARKER_RE.test(header);
+}
+
+function schoolNameLooksKv(v?: string | null): boolean {
+  return KV_MARKER_RE.test((v ?? "").replace(/\s+/g, " ").trim());
+}
 
 /** Rows for `createMany` — one row per category with a non-null total (no duplicates). */
 function buildEnrolmentSocialCreateManyData(
@@ -216,7 +259,7 @@ function buildTeacherBreakdownCreateManyData(
     }));
 }
 
-function buildRevenueScenarioRows(
+export function buildRevenueScenarioRows(
   udise: string,
   revBase: { totalStudents: number; boys?: number; girls?: number },
 ): Prisma.SchoolRevenueScenarioCreateManyInput[] {
@@ -235,23 +278,6 @@ function buildRevenueScenarioRows(
       revenueTotal: r.revenueTotal,
     });
   }
-  const custom = calculateRevenue({
-    ...revBase,
-    pricePerWash: 30,
-    adoptionRate: 0.85,
-    washesPerStudentPerMonth: 4,
-  });
-  rows.push({
-    udise,
-    kind: "CUSTOM",
-    label: "default",
-    inputs: { pricePerWash: 30, adoptionRate: 0.85, washesPerStudentPerMonth: 4 } as object,
-    monthlyRevenue: custom.monthlyRevenue,
-    annualRevenue: custom.annualRevenue,
-    revenueBoys: custom.revenueBoys,
-    revenueGirls: custom.revenueGirls,
-    revenueTotal: custom.revenueTotal,
-  });
   return rows;
 }
 
@@ -260,7 +286,11 @@ async function sha256File(filePath: string): Promise<string> {
   return crypto.createHash("sha256").update(buf).digest("hex");
 }
 
-export async function seedSchoolsFromJson(paths: ScrapedDataPaths, repoRoot?: string): Promise<number> {
+export async function seedSchoolsFromJson(
+  paths: ScrapedDataPaths,
+  repoRoot?: string,
+  canonicalPdfByUdise?: ReadonlyMap<string, string>,
+): Promise<number> {
   if (!paths.schoolsJson) return 0;
   try {
     await fs.access(paths.schoolsJson);
@@ -275,12 +305,20 @@ export async function seedSchoolsFromJson(paths: ScrapedDataPaths, repoRoot?: st
     const udise = normalizeUdise(row.udise_code);
     if (!/^\d{11}$/.test(udise)) continue;
 
-    const canonicalPdf = path.join(paths.pdfsDir, `${udise}.pdf`);
+    let pdfAbs = canonicalPdfByUdise?.get(udise);
+    if (!pdfAbs) {
+      const flat = path.join(paths.pdfsDir, `${udise}.pdf`);
+      try {
+        await fs.access(flat);
+        pdfAbs = flat;
+      } catch {
+        pdfAbs = undefined;
+      }
+    }
     let pdfRel: string;
-    try {
-      await fs.access(canonicalPdf);
-      pdfRel = toRepoRelative(canonicalPdf, repoRoot);
-    } catch {
+    if (pdfAbs) {
+      pdfRel = toRepoRelative(pdfAbs, repoRoot);
+    } else {
       pdfRel = row.pdf_path
         ? toRepoRelative(row.pdf_path, repoRoot)
         : `tools/pmshri-crawler/data/pdfs/${udise}.pdf`;
@@ -298,8 +336,8 @@ export async function seedSchoolsFromJson(paths: ScrapedDataPaths, repoRoot?: st
     const data: Prisma.SchoolCreateInput = {
       udise,
       schoolName: row.school_name || `School ${udise}`,
-      apiStateName: row.state ?? null,
-      geographicState: row.arcgis_state_label ?? row.state ?? null,
+      apiStateName: canonicalizeStateDisplay(row.state) ?? null,
+      geographicState: canonicalizeStateDisplay(row.arcgis_state_label ?? row.state) ?? null,
       geographicDistrict: row.district ?? null,
       blockName: row.address ?? null,
       latitude: row.latitude ?? null,
@@ -335,21 +373,15 @@ export async function seedSchoolsFromJson(paths: ScrapedDataPaths, repoRoot?: st
   return n;
 }
 
-/**
- * Ensure every PDF on disk has a School row (UDISE = filename). PDFs are the source of truth for facts;
- * schools.json only enriches discovery metadata when present.
- */
-export async function ensureSchoolStubsFromPdfDir(
+export async function ensureSchoolStubsFromInventory(
+  inv: PdfInventory,
   paths: ScrapedDataPaths,
   repoRoot?: string,
 ): Promise<number> {
   const prisma = getPrisma();
-  const files = (await fs.readdir(paths.pdfsDir)).filter((f) => f.toLowerCase().endsWith(".pdf"));
   let n = 0;
-  for (const file of files) {
-    const udise = normalizeUdise(path.basename(file, path.extname(file)));
-    if (!/^\d{11}$/.test(udise)) continue;
-    const fullPath = path.join(paths.pdfsDir, file);
+  const entries = [...inv.udiseToPdfPath.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [udise, fullPath] of entries) {
     const pdfRel = toRepoRelative(fullPath, repoRoot);
     const shotAbs = path.join(paths.screenshotsDir, `${udise}.png`);
     let shotRel: string | null = null;
@@ -378,10 +410,31 @@ export async function ensureSchoolStubsFromPdfDir(
   return n;
 }
 
+/**
+ * Ensure every PDF on disk has a School row (UDISE = filename). PDFs are the source of truth for facts;
+ * schools.json only enriches discovery metadata when present.
+ */
+export async function ensureSchoolStubsFromPdfDir(
+  paths: ScrapedDataPaths,
+  repoRoot?: string,
+  recursive = true,
+): Promise<number> {
+  const inv = await buildPdfInventory(paths.pdfsDir, recursive);
+  return ensureSchoolStubsFromInventory(inv, paths, repoRoot);
+}
+
 export type PdfImportOptions = {
   paths: ScrapedDataPaths;
   repoRoot?: string;
   force?: boolean;
+  /** Default true: discover `.pdf` under `pdfsDir` recursively. */
+  recursive?: boolean;
+  /** Written after successful imports (merged with prior file if present). */
+  checkpointFile?: string;
+  /** Skip UDISE codes listed in `checkpointFile` (use after a partial run). Ignored when `force` is true. */
+  resumeFromCheckpoint?: boolean;
+  /** Emit progress every N files (default 25). */
+  progressEvery?: number;
 };
 
 /**
@@ -390,35 +443,71 @@ export type PdfImportOptions = {
 export async function executePdfImportJob(jobId: string, options: PdfImportOptions): Promise<void> {
   const prisma = getPrisma();
   const { paths, repoRoot, force } = options;
+  const env = loadEnv();
+  const recursive = options.recursive !== false;
+  const progressEvery = options.progressEvery ?? 25;
 
   let processed = 0;
   let success = 0;
   let errors = 0;
+  let skippedResume = 0;
+  let skippedIdempotent = 0;
+  let skippedPolicy = 0;
+
+  const checkpointAccumulator = new Set<string>();
+  if (options.checkpointFile) {
+    if (options.resumeFromCheckpoint && !force) {
+      const prev = await loadBulkImportCheckpoint(options.checkpointFile);
+      for (const u of prev) checkpointAccumulator.add(u);
+    }
+  }
+  const skipUdises =
+    options.checkpointFile && options.resumeFromCheckpoint && !force ? checkpointAccumulator : new Set<string>();
 
   try {
     await fs.mkdir(paths.extractionsDir, { recursive: true });
-    await ensureSchoolStubsFromPdfDir(paths, repoRoot);
-    await seedSchoolsFromJson(paths, repoRoot);
-    const files = (await fs.readdir(paths.pdfsDir)).filter((f) => f.toLowerCase().endsWith(".pdf"));
+    const inv = await buildPdfInventory(paths.pdfsDir, recursive);
+    for (const { udise, path: dupPath } of inv.duplicatePaths) {
+      await prisma.importError.create({
+        data: {
+          jobId,
+          udise,
+          message: `Duplicate PDF skipped (canonical path chosen): ${dupPath}`,
+          severity: "warn",
+        },
+      });
+    }
+    await ensureSchoolStubsFromInventory(inv, paths, repoRoot);
+    await seedSchoolsFromJson(paths, repoRoot, inv.udiseToPdfPath);
+
+    const entries = [...inv.udiseToPdfPath.entries()].sort((a, b) => a[0].localeCompare(b[0]));
     await prisma.importJob.update({
       where: { id: jobId },
-      data: { totalFiles: files.length },
+      data: { totalFiles: entries.length },
     });
 
-    for (const file of files) {
-      const udise = normalizeUdise(path.basename(file, ".pdf"));
-      if (!/^\d{11}$/.test(udise)) {
-        await prisma.importError.create({
-          data: {
-            jobId,
-            message: `Skip invalid UDISE from filename: ${file}`,
-            severity: "warn",
-          },
+    const flushCheckpoint = async () => {
+      if (options.checkpointFile && checkpointAccumulator.size > 0) {
+        await writeBulkImportCheckpoint(options.checkpointFile, checkpointAccumulator);
+      }
+    };
+
+    for (const [udise, fullPath] of entries) {
+      if (skipUdises.has(udise)) {
+        skippedResume++;
+        processed++;
+        await prisma.importJob.update({
+          where: { id: jobId },
+          data: { processedFiles: processed, lastProcessedUdise: udise },
         });
+        if (processed % progressEvery === 0) {
+          logger.info(
+            { jobId, processed, total: entries.length, success, errors, skippedResume, skippedIdempotent, skippedPolicy },
+            "import progress",
+          );
+        }
         continue;
       }
-
-      const fullPath = path.join(paths.pdfsDir, file);
       let hash: string;
       try {
         hash = await sha256File(fullPath);
@@ -439,12 +528,40 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
       }
 
       const existing = await prisma.school.findUnique({ where: { udise } });
-      if (!force && existing?.sourcePdfHash === hash && existing.parsingStatus === "COMPLETE") {
+      if (existing && schoolNameLooksKv(existing.schoolName)) {
+        await prisma.importError.create({
+          data: {
+            jobId,
+            udise,
+            severity: "warn",
+            message: "Policy skip: Kendriya Vidyalaya/KVS marker in existing schoolName; deleting row",
+          },
+        });
+        await prisma.school.delete({ where: { udise } });
+        skippedPolicy++;
         processed++;
+        checkpointAccumulator.add(udise);
         await prisma.importJob.update({
           where: { id: jobId },
           data: { processedFiles: processed, lastProcessedUdise: udise },
         });
+        continue;
+      }
+      if (!force && existing?.sourcePdfHash === hash && existing.parsingStatus === "COMPLETE") {
+        skippedIdempotent++;
+        processed++;
+        checkpointAccumulator.add(udise);
+        await prisma.importJob.update({
+          where: { id: jobId },
+          data: { processedFiles: processed, lastProcessedUdise: udise },
+        });
+        if (skippedIdempotent % 50 === 0) await flushCheckpoint();
+        if (processed % progressEvery === 0) {
+          logger.info(
+            { jobId, processed, total: entries.length, success, errors, skippedResume, skippedIdempotent, skippedPolicy },
+            "import progress",
+          );
+        }
         continue;
       }
 
@@ -469,8 +586,40 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
       }
 
       try {
-        const extracted = await extractPdfText(buffer);
-        const normalized = parseReportCardText(extracted.text, udise);
+        let extracted = await extractPdfText(buffer);
+        let normalized = parseReportCardText(extracted.text, udise);
+        if (env.REPORT_CARD_OCR_WEAK_RETRY && looksWeakForKpi(normalized) && !extracted.usedOcr) {
+          const ocrExtracted = await extractPdfText(buffer, { forceOcr: true });
+          const ocrNormalized = parseReportCardText(ocrExtracted.text, udise);
+          if (parseStrengthScore(ocrNormalized) > parseStrengthScore(normalized)) {
+            extracted = ocrExtracted;
+            normalized = ocrNormalized;
+          }
+        }
+        if (looksLikeKvInstitution(extracted.text, normalized.schoolProfile?.name)) {
+          await prisma.importError.create({
+            data: {
+              jobId,
+              udise,
+              severity: "warn",
+              message: "Policy skip: Kendriya Vidyalaya/KVS marker detected in PDF; school removed",
+            },
+          });
+          await prisma.school.deleteMany({ where: { udise } });
+          skippedPolicy++;
+          processed++;
+          checkpointAccumulator.add(udise);
+          await prisma.importJob.update({
+            where: { id: jobId },
+            data: {
+              processedFiles: processed,
+              successCount: success,
+              errorCount: errors,
+              lastProcessedUdise: udise,
+            },
+          });
+          continue;
+        }
         const meta = reportCardExtractionMeta(normalized, extracted.text, udise);
         const pdfRel = toRepoRelative(fullPath, repoRoot);
 
@@ -478,12 +627,15 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
         const mergedName =
           (sp?.name?.trim() ? sp.name.trim() : undefined) || existing?.schoolName || `JNV ${udise}`;
         const geoState =
-          (sp?.state?.trim() ? sp.state.trim() : undefined) || existing?.geographicState || null;
+          canonicalizeStateDisplay(sp?.state?.trim() ? sp.state.trim() : undefined) ??
+          canonicalizeStateDisplay(existing?.geographicState) ??
+          null;
         const geoDist =
           (sp?.district?.trim() ? sp.district.trim() : undefined) || existing?.geographicDistrict || null;
 
         const st = normalized.students;
-        const totalStudents = st?.total ?? undefined;
+        const socialTotal = normalized.enrolmentSocial?.total ?? null;
+        const totalStudents = st?.total ?? (socialTotal != null && socialTotal > 0 ? socialTotal : undefined);
         const totalBoys = st?.boys ?? undefined;
         const totalGirls = st?.girls ?? undefined;
 
@@ -520,7 +672,8 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
                 sourcePdfHash: hash,
                 pdfRelativePath: pdfRel,
                 extractorVersion: REPORT_CARD_PARSER_VERSION,
-                parsingStatus: meta.confidence >= 0.65 ? "COMPLETE" : "PARTIAL",
+                parsingStatus:
+                  meta.confidence >= PARSING_COMPLETE_CONFIDENCE_THRESHOLD ? "COMPLETE" : "PARTIAL",
                 lastPdfExtractedAt: new Date(),
                 overallExtractionConfidence: meta.confidence,
                 importLastError: null,
@@ -537,7 +690,8 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
                 sourcePdfHash: hash,
                 pdfRelativePath: pdfRel,
                 extractorVersion: REPORT_CARD_PARSER_VERSION,
-                parsingStatus: meta.confidence >= 0.65 ? "COMPLETE" : "PARTIAL",
+                parsingStatus:
+                  meta.confidence >= PARSING_COMPLETE_CONFIDENCE_THRESHOLD ? "COMPLETE" : "PARTIAL",
                 lastPdfExtractedAt: new Date(),
                 overallExtractionConfidence: meta.confidence,
                 importLastError: null,
@@ -546,56 +700,56 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
               },
             });
 
-            await tx.schoolEnrolmentSocial.deleteMany({ where: { udise } });
             if (normalized.enrolmentSocial) {
               const socialRows = buildEnrolmentSocialCreateManyData(udise, normalized.enrolmentSocial);
               if (socialRows.length > 0) {
+                await tx.schoolEnrolmentSocial.deleteMany({ where: { udise } });
                 await tx.schoolEnrolmentSocial.createMany({ data: socialRows });
               }
             }
 
-            await tx.schoolEnrolmentMinority.deleteMany({ where: { udise } });
             if (normalized.enrolmentMinority && minorityHasData(normalized.enrolmentMinority)) {
               const minorityRows = buildEnrolmentMinorityCreateManyData(udise, normalized.enrolmentMinority);
               if (minorityRows.length > 0) {
+                await tx.schoolEnrolmentMinority.deleteMany({ where: { udise } });
                 await tx.schoolEnrolmentMinority.createMany({ data: minorityRows });
               }
             }
 
-            await tx.schoolEnrolmentOthers.deleteMany({ where: { udise } });
             if (normalized.enrolmentOthers && othersHasData(normalized.enrolmentOthers)) {
               const othersRows = buildEnrolmentOthersCreateManyData(udise, normalized.enrolmentOthers);
               if (othersRows.length > 0) {
+                await tx.schoolEnrolmentOthers.deleteMany({ where: { udise } });
                 await tx.schoolEnrolmentOthers.createMany({ data: othersRows });
               }
             }
 
-            await tx.schoolEnrolmentAge.deleteMany({ where: { udise } });
             if (normalized.enrolmentAge && ageHasData(normalized.enrolmentAge)) {
               const ageRows = buildEnrolmentAgeCreateManyData(udise, normalized.enrolmentAge);
               if (ageRows.length > 0) {
+                await tx.schoolEnrolmentAge.deleteMany({ where: { udise } });
                 await tx.schoolEnrolmentAge.createMany({ data: ageRows });
               }
             }
 
-            await tx.schoolInfra.deleteMany({ where: { udise } });
             if (normalized.infra && infraHasData(normalized.infra)) {
+              await tx.schoolInfra.deleteMany({ where: { udise } });
               await tx.schoolInfra.create({
                 data: buildSchoolInfraCreateData(udise, normalized.infra),
               });
             }
 
-            await tx.schoolDigitalFacilities.deleteMany({ where: { udise } });
             if (normalized.digital && digitalHasData(normalized.digital)) {
+              await tx.schoolDigitalFacilities.deleteMany({ where: { udise } });
               await tx.schoolDigitalFacilities.create({
                 data: buildSchoolDigitalCreateData(udise, normalized.digital),
               });
             }
 
-            await tx.schoolTeacherBreakdown.deleteMany({ where: { udise } });
             if (normalized.teachers && teachersHasData(normalized.teachers)) {
               const teacherRows = buildTeacherBreakdownCreateManyData(udise, normalized.teachers);
               if (teacherRows.length > 0) {
+                await tx.schoolTeacherBreakdown.deleteMany({ where: { udise } });
                 await tx.schoolTeacherBreakdown.createMany({ data: teacherRows });
               }
             }
@@ -714,6 +868,8 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
         );
 
         success++;
+        checkpointAccumulator.add(udise);
+        if (success % 25 === 0) await flushCheckpoint();
       } catch (e) {
         errors++;
         await prisma.importError.create({
@@ -743,7 +899,30 @@ export async function executePdfImportJob(jobId: string, options: PdfImportOptio
           lastProcessedUdise: udise,
         },
       });
+      if (processed % progressEvery === 0) {
+        logger.info(
+          { jobId, processed, total: entries.length, success, errors, skippedResume, skippedIdempotent, skippedPolicy },
+          "import progress",
+        );
+      }
     }
+
+    await flushCheckpoint();
+
+    const summaryReport = {
+      jobId,
+      pdfPathsOnDisk: entries.length + inv.duplicatePaths.length,
+      uniqueUdise: entries.length,
+      duplicatePdfPathsSkipped: inv.duplicatePaths.length,
+      processed,
+      success,
+      errors,
+      skippedResume,
+      skippedIdempotent,
+      skippedPolicy,
+    };
+    console.log(`\n=== Bulk PDF import summary ===\n${JSON.stringify(summaryReport, null, 2)}\n`);
+    logger.info(summaryReport, "Bulk PDF import summary");
 
     const status: ImportJobStatus =
       errors === 0 ? "COMPLETED" : success > 0 ? "PARTIAL" : "FAILED";

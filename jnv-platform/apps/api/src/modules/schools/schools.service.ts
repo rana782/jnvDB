@@ -28,6 +28,30 @@ import {
   udiseInChunksWhere,
 } from "./school-list-derived-filters.js";
 
+function disambiguateSchoolNames<T extends { schoolName: string; geographicDistrict: string | null; geographicState: string | null; udise: string }>(
+  items: T[],
+): T[] {
+  const byKey = new Map<string, T[]>();
+  for (const it of items) {
+    const k = it.schoolName.trim().toLowerCase();
+    const arr = byKey.get(k) ?? [];
+    arr.push(it);
+    byKey.set(k, arr);
+  }
+  for (const group of byKey.values()) {
+    if (group.length <= 1) continue;
+    const seen = new Set<string>();
+    for (const it of group) {
+      const suffix = it.geographicDistrict?.trim() || it.geographicState?.trim() || null;
+      const withSuffix = suffix ? `${it.schoolName} (${suffix})` : it.schoolName;
+      const candidate = seen.has(withSuffix.toLowerCase()) ? `${withSuffix} [${it.udise}]` : withSuffix;
+      it.schoolName = candidate;
+      seen.add(candidate.toLowerCase());
+    }
+  }
+  return items;
+}
+
 function rowToCompletenessSnapshot(row: SchoolDetailRow): ProfileCompletenessSnapshot {
   return {
     totalStudents: row.totalStudents,
@@ -75,6 +99,20 @@ async function persistCompletenessIfChanged(row: SchoolDetailRow): Promise<Schoo
     data: { profileCompletenessPct: computed, pilotSuitable: pilot },
   });
   return { ...row, profileCompletenessPct: computed, pilotSuitable: pilot };
+}
+
+/** Recompute profile completeness + pilot flag from current relations (after bulk KPI backfill). */
+export async function recomputeSchoolDerivations(udiseRaw: string): Promise<void> {
+  const prisma = getPrisma();
+  const udise = normalizeUdise(udiseRaw);
+  const row = await prisma.school.findUnique({ where: { udise }, include: schoolDetailInclude });
+  if (!row) return;
+  const computed = computeProfileCompletenessFromSnapshot(rowToCompletenessSnapshot(row));
+  const pilot = computePilotSuitable(row, computed);
+  await prisma.school.update({
+    where: { udise },
+    data: { profileCompletenessPct: computed, pilotSuitable: pilot },
+  });
 }
 
 /** Treat empty query-string values as omitted (avoids NaN from z.coerce). */
@@ -178,6 +216,7 @@ export async function listSchools(pagination: PaginationQuery, filters: SchoolFi
       OR: [
         { geographicState: { contains: filters.state } },
         { apiStateName: { contains: filters.state } },
+        { state: { name: { contains: filters.state } } },
       ],
     });
   }
@@ -244,8 +283,9 @@ export async function listSchools(pagination: PaginationQuery, filters: SchoolFi
     prisma.school.count({ where }),
   ]);
 
+  const items = disambiguateSchoolNames(rows.map(toSchoolListItem));
   return {
-    items: rows.map(toSchoolListItem),
+    items,
     total,
     page: pagination.page,
     pageSize: pagination.pageSize,
@@ -398,4 +438,113 @@ export async function postRevenueCalculate(body: {
     washesPerStudentPerMonth:
       body.washesPerStudentPerMonth ?? school.manualWashesPerStudentMonth ?? 4,
   });
+}
+
+export type SchoolInfraInsights = {
+  totalSchools: number;
+  facilities: {
+    key: "water" | "electricity" | "internet" | "solar" | "playground" | "library";
+    label: string;
+    available: number;
+    missing: number;
+    pctAvailable: number;
+  }[];
+  coverageBuckets: { label: string; count: number }[];
+  digitalAccess: {
+    key: "smartClassTv" | "desktops" | "laptops" | "tablets";
+    label: string;
+    count: number;
+    pct: number;
+  }[];
+};
+
+export async function getSchoolInfraInsights(): Promise<SchoolInfraInsights> {
+  const prisma = getPrisma();
+  const rows = await prisma.school.findMany({
+    select: {
+      waterAvailable: true,
+      electricityAvailable: true,
+      internetAvailable: true,
+      solarAvailable: true,
+      playgroundAvailable: true,
+      libraryAvailable: true,
+      digital: {
+        select: {
+          smartClassTv: true,
+          desktops: true,
+          laptops: true,
+          tablets: true,
+        },
+      },
+    },
+  });
+  const totalSchools = rows.length;
+  const safePct = (n: number) => (totalSchools > 0 ? Math.round((n / totalSchools) * 1000) / 10 : 0);
+
+  const facilityDefs = [
+    { key: "water", label: "Water", pick: (r: (typeof rows)[number]) => r.waterAvailable === true },
+    { key: "electricity", label: "Electricity", pick: (r: (typeof rows)[number]) => r.electricityAvailable === true },
+    { key: "internet", label: "Internet", pick: (r: (typeof rows)[number]) => r.internetAvailable === true },
+    { key: "solar", label: "Solar", pick: (r: (typeof rows)[number]) => r.solarAvailable === true },
+    { key: "playground", label: "Playground", pick: (r: (typeof rows)[number]) => r.playgroundAvailable === true },
+    { key: "library", label: "Library", pick: (r: (typeof rows)[number]) => r.libraryAvailable === true },
+  ] as const;
+
+  const facilities = facilityDefs.map((f) => {
+    const available = rows.reduce((acc, r) => acc + (f.pick(r) ? 1 : 0), 0);
+    return {
+      key: f.key,
+      label: f.label,
+      available,
+      missing: Math.max(0, totalSchools - available),
+      pctAvailable: safePct(available),
+    };
+  });
+
+  const coverageBuckets = [
+    { label: "0-2 facilities", count: 0 },
+    { label: "3-4 facilities", count: 0 },
+    { label: "5-6 facilities", count: 0 },
+  ];
+  for (const r of rows) {
+    const n =
+      (r.waterAvailable === true ? 1 : 0) +
+      (r.electricityAvailable === true ? 1 : 0) +
+      (r.internetAvailable === true ? 1 : 0) +
+      (r.solarAvailable === true ? 1 : 0) +
+      (r.playgroundAvailable === true ? 1 : 0) +
+      (r.libraryAvailable === true ? 1 : 0);
+    if (n <= 2) coverageBuckets[0]!.count += 1;
+    else if (n <= 4) coverageBuckets[1]!.count += 1;
+    else coverageBuckets[2]!.count += 1;
+  }
+
+  const digitalAccess = [
+    {
+      key: "smartClassTv" as const,
+      label: "Smart class TV",
+      count: rows.reduce((a, r) => a + ((r.digital?.smartClassTv ?? 0) > 0 ? 1 : 0), 0),
+      pct: 0,
+    },
+    {
+      key: "desktops" as const,
+      label: "Desktops",
+      count: rows.reduce((a, r) => a + ((r.digital?.desktops ?? 0) > 0 ? 1 : 0), 0),
+      pct: 0,
+    },
+    {
+      key: "laptops" as const,
+      label: "Laptops",
+      count: rows.reduce((a, r) => a + ((r.digital?.laptops ?? 0) > 0 ? 1 : 0), 0),
+      pct: 0,
+    },
+    {
+      key: "tablets" as const,
+      label: "Tablets",
+      count: rows.reduce((a, r) => a + ((r.digital?.tablets ?? 0) > 0 ? 1 : 0), 0),
+      pct: 0,
+    },
+  ].map((d) => ({ ...d, pct: safePct(d.count) }));
+
+  return { totalSchools, facilities, coverageBuckets, digitalAccess };
 }

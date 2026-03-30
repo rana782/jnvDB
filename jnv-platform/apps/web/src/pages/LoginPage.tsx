@@ -20,9 +20,9 @@ export function LoginPage() {
   });
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
-      <div className="w-full max-w-md rounded-xl border border-line bg-card p-8 shadow-lg">
-        <h1 className="text-xl font-semibold text-ink">Founder login</h1>
+    <div className="flex min-h-screen items-center justify-center bg-canvas bg-premium-radial px-4">
+      <div className="premium-panel w-full max-w-md rounded-xl p-8 premium-ring">
+        <h1 className="text-xl font-semibold premium-gradient-text">Founder login</h1>
         <p className="mt-1 text-sm text-muted">Rollcode and password (httpOnly cookie session).</p>
         <form
           className="mt-6 space-y-4"
@@ -40,7 +40,7 @@ export function LoginPage() {
               id="login-rollcode"
               name="rollcode"
               aria-label="Rollcode"
-              className="mt-1 w-full rounded-lg border border-line bg-canvas px-3 py-2.5 text-sm text-ink outline-none transition-all duration-150 focus:border-accent focus:ring-2 focus:ring-accent/20"
+              className="mt-1 w-full rounded-lg border border-line bg-surface-3 px-3 py-2.5 text-sm text-ink outline-none transition-all duration-150 focus:border-accent focus:ring-2 focus:ring-accent/20"
               value={rollcode}
               onChange={(e) => setRollcode(e.target.value)}
               autoComplete="username"
@@ -55,7 +55,7 @@ export function LoginPage() {
               name="password"
               type="password"
               aria-label="Password"
-              className="mt-1 w-full rounded-lg border border-line bg-canvas px-3 py-2.5 text-sm text-ink outline-none transition-all duration-150 focus:border-accent focus:ring-2 focus:ring-accent/20"
+              className="mt-1 w-full rounded-lg border border-line bg-surface-3 px-3 py-2.5 text-sm text-ink outline-none transition-all duration-150 focus:border-accent focus:ring-2 focus:ring-accent/20"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"

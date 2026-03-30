@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "../../shared/prisma.js";
-import { aggregateSchools } from "./map-aggregate-core.js";
+import { aggregateSchools, effectiveDisplayState, stateLabelKey } from "./map-aggregate-core.js";
 import {
   ensureMapRollupsPopulated,
   isMapRollupEligible,
@@ -60,6 +60,7 @@ function isMissingRollupTable(e: unknown): boolean {
 const schoolMapSelect = {
   udise: true,
   geographicState: true,
+  apiStateName: true,
   geographicDistrict: true,
   totalStudents: true,
   profileCompletenessPct: true,
@@ -130,19 +131,21 @@ export async function mapDistrictAggregates(stateName: string, filters: MapAggre
 
   const prisma = getPrisma();
   const baseWhere = buildSchoolWhere(filters);
-  const stateFilter: Prisma.SchoolWhereInput = { geographicState: stateName };
-  const where: Prisma.SchoolWhereInput =
-    Object.keys(baseWhere).length > 0 ? { AND: [baseWhere, stateFilter] } : stateFilter;
+  const where = Object.keys(baseWhere).length > 0 ? baseWhere : undefined;
 
-  const schools = await prisma.school.findMany({
+  const schoolsAll = await prisma.school.findMany({
     where,
     select: {
+      geographicState: true,
+      apiStateName: true,
       geographicDistrict: true,
       totalStudents: true,
       profileCompletenessPct: true,
       parsingStatus: true,
     },
   });
+  const key = stateLabelKey(stateName);
+  const schools = schoolsAll.filter((s) => stateLabelKey(effectiveDisplayState(s)) === key);
 
   const byDistrict = new Map<
     string,

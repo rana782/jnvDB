@@ -17,10 +17,16 @@
     "db:migrate": "npm run db:migrate -w @jnv/api",
     "db:push": "npm run db:push -w @jnv/api",
     "db:setup": "npm run db:setup -w @jnv/api",
+    "dev:promote-partial": "npm run dev:promote-partial -w @jnv/api",
+    "dev:reconcile-dashboard": "npm run dev:reconcile-dashboard -w @jnv/api",
     "import:run": "npm run import:run -w @jnv/api",
+    "import:run:ocr": "npm run import:run:ocr -w @jnv/api",
+    "verify:pdf-db": "npm run verify:pdf-db -w @jnv/api",
     "e2e": "npm run e2e -w @jnv/web",
     "e2e:verify": "npm run e2e:verify -w @jnv/web",
-    "verify:stack": "npm run db:setup -w @jnv/api && npm run verify:golden-pdf -w @jnv/api && npm run import:run -w @jnv/api && npm run e2e:verify -w @jnv/web && npm run verify:capture-api -w @jnv/api"
+    "verify:stack": "npm run db:setup -w @jnv/api && npm run verify:golden-pdf -w @jnv/api && npm run import:run -w @jnv/api && npm run e2e:verify -w @jnv/web && npm run verify:capture-api -w @jnv/api",
+    "verify:all": "npm run verify:golden-pdf -w @jnv/api && npm run import:bulk -w @jnv/api && npm run verify:api-all -w @jnv/api && npm run test -w @jnv/api && npm run e2e:release -w @jnv/web && npm run verify:report -w @jnv/api",
+    "release:all": "npm run verify:all"
   },
   "devDependencies": {
     "prettier": "^3.4.2"

@@ -1,18 +1,21 @@
 import { PrismaClient } from "@prisma/client";
 import argon2 from "argon2";
+import {
+  INDIAN_STATES_FOR_SEED,
+  NVS_REGION_OFFICES,
+} from "../src/data/nvs-states-regions.js";
+import { effectiveDisplayState } from "../src/modules/map/map-aggregate-core.js";
+
+function normalizeStateLabel(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/nct\s+of\s+/gi, "")
+    .replace(/\./g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 const prisma = new PrismaClient();
-
-const REGION_DEFS = [
-  { code: "RO-1", name: "Bhopal", description: "Madhya Pradesh, Chhattisgarh, Odisha" },
-  { code: "RO-2", name: "Patna", description: "Bihar, Jharkhand, West Bengal" },
-  { code: "RO-3", name: "Lucknow", description: "Uttar Pradesh, Uttarakhand" },
-  { code: "RO-4", name: "Jaipur", description: "Rajasthan, Haryana, Delhi, Punjab" },
-  { code: "RO-5", name: "Chandigarh", description: "Himachal Pradesh, J&K, Ladakh" },
-  { code: "RO-6", name: "Shillong", description: "North-East states" },
-  { code: "RO-7", name: "Hyderabad", description: "Telangana, Andhra Pradesh, Karnataka" },
-  { code: "RO-8", name: "Pune", description: "Maharashtra, Goa, Gujarat, Daman & Diu" },
-] as const;
 
 const ROLE_NAMES = ["super_admin", "founder", "analyst", "viewer"] as const;
 
@@ -32,13 +35,61 @@ async function main() {
     console.warn("Pipeline enum migration SQL skipped or failed (ok on fresh DB):", e);
   }
 
-  for (const r of REGION_DEFS) {
+  for (const r of NVS_REGION_OFFICES) {
     await prisma.regionOffice.upsert({
       where: { code: r.code },
       create: { code: r.code, name: r.name, description: r.description },
       update: { name: r.name, description: r.description },
     });
   }
+
+  const regionsByCode = Object.fromEntries(
+    (await prisma.regionOffice.findMany({ select: { id: true, code: true } })).map((x) => [x.code, x.id]),
+  );
+
+  for (const row of INDIAN_STATES_FOR_SEED) {
+    const normalizedName = normalizeStateLabel(row.name);
+    const regionId = regionsByCode[row.regionCode] ?? null;
+    await prisma.state.upsert({
+      where: { normalizedName },
+      create: { name: row.name, normalizedName, regionId },
+      update: { name: row.name, regionId },
+    });
+  }
+
+  const states = await prisma.state.findMany({ select: { id: true, name: true, normalizedName: true } });
+  const exactByNorm = new Map(states.map((s) => [normalizeStateLabel(s.normalizedName), s.id]));
+  for (const s of states) {
+    exactByNorm.set(normalizeStateLabel(s.name), s.id);
+  }
+
+  const schools = await prisma.school.findMany({
+    select: { udise: true, geographicState: true, apiStateName: true, stateId: true },
+  });
+  let linked = 0;
+  for (const sch of schools) {
+    const label = effectiveDisplayState({
+      geographicState: sch.geographicState,
+      apiStateName: sch.apiStateName,
+    });
+    if (!label || label === "Unknown") continue;
+    const n = normalizeStateLabel(label);
+    let stateId = exactByNorm.get(n) ?? null;
+    if (!stateId) {
+      for (const st of states) {
+        const sn = normalizeStateLabel(st.name);
+        if (sn.length >= 3 && (n.includes(sn) || sn.includes(n))) {
+          stateId = st.id;
+          break;
+        }
+      }
+    }
+    if (stateId && stateId !== sch.stateId) {
+      await prisma.school.update({ where: { udise: sch.udise }, data: { stateId } });
+      linked++;
+    }
+  }
+  console.log("States seeded:", states.length, "| Schools linked / corrected to State:", linked);
 
   for (const name of ROLE_NAMES) {
     await prisma.role.upsert({

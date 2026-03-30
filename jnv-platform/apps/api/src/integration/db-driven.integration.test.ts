@@ -10,7 +10,15 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { clearEnvCacheForTests } from "../config/env.js";
-import { dashboardOverview, dashboardProgress, dashboardSummary } from "../modules/analytics/dashboard.service.js";
+import {
+  dashboardOverview,
+  dashboardProgress,
+  dashboardSummary,
+} from "../modules/analytics/dashboard.service.js";
+import { effectiveHeadcountFromRow } from "../shared/effective-school-headcount.js";
+import { inferNvsRegionFromDisplayState } from "../data/nvs-states-regions.js";
+import { effectiveDisplayState } from "../modules/map/map-aggregate-core.js";
+import { calculateRevenue } from "../modules/analytics/revenue-calculator.js";
 import { mapStateAggregates } from "../modules/map/map.service.js";
 import { computeRevenueProjection } from "../modules/analytics/revenue-projection.service.js";
 import { patchSchoolStatus } from "../modules/schools/schools.service.js";
@@ -62,24 +70,74 @@ describe("DB-driven platform checks (dev.db)", () => {
     }
   });
 
-  it("DB + API: dashboard summary matches Prisma aggregates (no mock totals)", async () => {
+  it("DB + API: dashboard summary matches effective headcount + model revenue rules", async () => {
     const prisma = getPrisma();
-    const [count, studentsAgg, doneCount, revAgg] = await Promise.all([
+    const [count, doneCount, rows] = await Promise.all([
       prisma.school.count(),
-      prisma.school.aggregate({ _sum: { totalStudents: true } }),
       prisma.school.count({ where: { pipelineStatus: "DONE" } }),
-      prisma.schoolRevenueScenario.aggregate({
-        where: { kind: "CUSTOM" },
-        _sum: { monthlyRevenue: true, annualRevenue: true },
+      prisma.school.findMany({
+        select: {
+          geographicState: true,
+          apiStateName: true,
+          stateId: true,
+          totalStudents: true,
+          totalBoys: true,
+          totalGirls: true,
+          enrolmentSocial: {
+            where: { category: "Total" },
+            take: 1,
+            select: { total: true, boys: true, girls: true },
+          },
+          revenueScenarios: {
+            where: { kind: "CUSTOM" },
+            orderBy: { computedAt: "desc" },
+            take: 1,
+            select: { monthlyRevenue: true, annualRevenue: true },
+          },
+        },
       }),
     ]);
 
+    let expectedStudents = 0;
+    let expectedMonthly = 0;
+    let expectedAnnual = 0;
+    let expectedWithHead = 0;
+    let expectedLinked = 0;
+
+    for (const s of rows) {
+      const head = effectiveHeadcountFromRow(s);
+      expectedStudents += head.total;
+      if (head.total > 0) expectedWithHead += 1;
+      const display = effectiveDisplayState(s);
+      if (s.stateId != null || inferNvsRegionFromDisplayState(display) != null) expectedLinked += 1;
+
+      const sm = s.revenueScenarios[0]?.monthlyRevenue;
+      const sa = s.revenueScenarios[0]?.annualRevenue;
+      if (sm != null && sm > 0) {
+        expectedMonthly += sm;
+        expectedAnnual += sa != null && sa > 0 ? sa : sm * 12;
+      } else if (head.total > 0) {
+        const r = calculateRevenue({
+          totalStudents: head.total,
+          boys: head.boys,
+          girls: head.girls,
+          pricePerWash: 30,
+          adoptionRate: 0.85,
+          washesPerStudentPerMonth: 4,
+        });
+        expectedMonthly += r.monthlyRevenue;
+        expectedAnnual += r.annualRevenue;
+      }
+    }
+
     const summary = await dashboardSummary();
     expect(summary.totalSchools).toBe(count);
-    expect(summary.totalStudents).toBe(studentsAgg._sum.totalStudents ?? 0);
     expect(summary.schoolsCompleted).toBe(doneCount);
-    expect(summary.portfolioMonthlyRevenue).toBe(revAgg._sum.monthlyRevenue ?? 0);
-    expect(summary.portfolioAnnualRevenue).toBe(revAgg._sum.annualRevenue ?? 0);
+    expect(summary.totalStudents).toBe(expectedStudents);
+    expect(summary.schoolsWithStudentHeadcount).toBe(expectedWithHead);
+    expect(summary.schoolsLinkedToNvsRegion).toBe(expectedLinked);
+    expect(summary.portfolioMonthlyRevenue).toBe(Math.round(expectedMonthly * 100) / 100);
+    expect(summary.portfolioAnnualRevenue).toBe(Math.round(expectedAnnual * 100) / 100);
 
     const app = await buildApp();
     try {
@@ -146,18 +204,15 @@ describe("DB-driven platform checks (dev.db)", () => {
     }
   });
 
-  it("Revenue: projection portfolio school count matches DB; summary CUSTOM sum matches Prisma", async () => {
+  it("Revenue: projection portfolio school count matches DB; summary uses hybrid portfolio model", async () => {
     const prisma = getPrisma();
     const n = await prisma.school.count();
     const proj = await computeRevenueProjection({});
     expect(proj.portfolio.schoolCount).toBe(n);
 
-    const dbMonthly = await prisma.schoolRevenueScenario.aggregate({
-      where: { kind: "CUSTOM" },
-      _sum: { monthlyRevenue: true },
-    });
     const summary = await dashboardSummary();
-    expect(summary.portfolioMonthlyRevenue).toBe(dbMonthly._sum.monthlyRevenue ?? 0);
+    expect(summary.portfolioMonthlyRevenue).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(summary.portfolioMonthlyRevenue)).toBe(true);
   });
 
   it("Progress updates: patchSchoolStatus writes DB and progress event; then restores", async () => {

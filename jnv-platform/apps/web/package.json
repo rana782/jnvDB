@@ -9,7 +9,8 @@
     "lint": "eslint src --ext ts,tsx",
     "preview": "vite preview",
     "e2e": "playwright test",
-    "e2e:verify": "playwright test verify-screenshots.spec.ts verify-fixture-expansion.spec.ts --workers=1"
+    "e2e:verify": "playwright test verify-screenshots.spec.ts verify-fixture-expansion.spec.ts --workers=1",
+    "e2e:release": "playwright test verify-screenshots.spec.ts verify-fixture-expansion.spec.ts verify-release-sampling.spec.ts --workers=1"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.8",
@@ -25,6 +26,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",
+    "@types/d3-geo": "^3.1.0",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",

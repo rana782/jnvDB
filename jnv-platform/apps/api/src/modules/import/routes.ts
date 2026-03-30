@@ -5,11 +5,17 @@ import { resolveScrapedDataPaths } from "../../config/paths.js";
 import { getPrisma } from "../../shared/prisma.js";
 import { AppError } from "../../shared/errors.js";
 import { authenticate, requireRoles } from "../auth/guards.js";
-import { enqueuePdfImport, ensureSchoolStubsFromPdfDir, seedSchoolsFromJson } from "./ingest.service.js";
+import {
+  enqueuePdfImport,
+  ensureSchoolStubsFromInventory,
+  seedSchoolsFromJson,
+} from "./ingest.service.js";
+import { buildPdfInventory } from "./pdf-inventory.js";
 
 const runBody = z.object({
   force: z.boolean().optional(),
   seedOnly: z.boolean().optional(),
+  recursive: z.boolean().optional(),
 });
 
 export const registerImportRoutes: FastifyPluginAsync = async (app) => {
@@ -32,8 +38,10 @@ export const registerImportRoutes: FastifyPluginAsync = async (app) => {
       }
 
       if (body.seedOnly) {
-        const stubs = await ensureSchoolStubsFromPdfDir(paths, paths.repoRoot);
-        const n = await seedSchoolsFromJson(paths, paths.repoRoot);
+        const recursive = body.recursive !== false;
+        const inv = await buildPdfInventory(paths.pdfsDir, recursive);
+        const stubs = await ensureSchoolStubsFromInventory(inv, paths, paths.repoRoot);
+        const n = await seedSchoolsFromJson(paths, paths.repoRoot, inv.udiseToPdfPath);
         return { ok: true, seededFromJson: n, stubsFromPdf: stubs };
       }
 
@@ -41,6 +49,7 @@ export const registerImportRoutes: FastifyPluginAsync = async (app) => {
         paths,
         repoRoot: paths.repoRoot,
         force: body.force,
+        recursive: body.recursive !== false,
       });
       return reply.code(202).send({ accepted: true, jobId });
     },

@@ -63,6 +63,41 @@ function applyTableHeuristics(lines: string[], values: SocialValues, anchorLineI
   }
 }
 
+function compactTailTotal(digits: string): number | null {
+  const clean = digits.replace(/\D/g, "");
+  if (clean.length < 2) return null;
+  const pick = (len: number) => {
+    if (clean.length < len) return null;
+    const n = num(clean.slice(-len));
+    return n ?? null;
+  };
+  const n3 = pick(3);
+  if (n3 != null && n3 >= 50 && n3 <= 2500) return n3;
+  const n4 = pick(4);
+  if (n4 != null && n4 >= 50 && n4 <= 2500) return n4;
+  const n2 = pick(2);
+  if (n2 != null && n2 >= 50 && n2 <= 2500) return n2;
+  return null;
+}
+
+function recoverDenseSocialTotal(lines: string[], anchorLineIdx: number): number | null {
+  const start = Math.max(0, anchorLineIdx);
+  const end = Math.min(lines.length, anchorLineIdx + 80);
+  let fallback: number | null = null;
+  for (let i = start; i < end; i++) {
+    const line = lines[i]?.replace(/\s+/g, " ").trim();
+    if (!line) continue;
+    if (!/(?:^|\b)(?:g\.?\s*total|total)/i.test(line)) continue;
+    const runs = line.match(/\d{3,}/g);
+    if (!runs || runs.length === 0) continue;
+    const candidate = compactTailTotal(runs[runs.length - 1]!);
+    if (candidate == null) continue;
+    if (/(?:^|\b)g\.?\s*total/i.test(line)) return candidate;
+    if (fallback == null) fallback = candidate;
+  }
+  return fallback;
+}
+
 /**
  * Primary extractor: SC / ST / OBC / General / Total. Missing slots stay null.
  */
@@ -101,6 +136,9 @@ export function extractEnrolmentSocialFromReportCard(text: string): {
   const anchorLineIdx = lines.findIndex((l) => SOCIAL_ANCHOR_RE.test(l));
   if (anchorLineIdx >= 0) applyTableHeuristics(lines, values, anchorLineIdx);
   else applyTableHeuristics(lines, values, 0);
+  if (values.total == null && anchorLineIdx >= 0) {
+    values.total = recoverDenseSocialTotal(lines, anchorLineIdx);
+  }
 
   const filled = [values.sc, values.st, values.obc, values.general, values.total].filter(
     (x) => x != null,

@@ -9,9 +9,29 @@
 body {
   margin: 0;
   min-height: 100vh;
+  background: #f8fafc;
+  background-image:
+    radial-gradient(1200px 520px at 6% -20%, rgba(37, 99, 235, 0.12), transparent 58%),
+    radial-gradient(900px 420px at 94% -15%, rgba(14, 165, 164, 0.08), transparent 55%);
 }
 
 @layer utilities {
+  .premium-panel {
+    @apply border border-line bg-card;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+  }
+
+  .premium-ring {
+    @apply ring-1 ring-inset ring-slate-900/5;
+  }
+
+  .premium-gradient-text {
+    background: linear-gradient(90deg, #0f172a 0%, #2563eb 55%, #0d9488 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
   .transition-app {
     transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow,
       transform;

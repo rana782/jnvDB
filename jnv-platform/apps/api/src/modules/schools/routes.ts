@@ -11,6 +11,7 @@ import {
   getSchoolCanonical,
   getSchoolDetailApi,
   getSchoolDetailRow,
+  getSchoolInfraInsights,
   listSchools,
   patchManualFields,
   patchSchoolStatus,
@@ -80,6 +81,10 @@ export const registerSchoolRoutes: FastifyPluginAsync = async (app) => {
     const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
     const udises = list.flatMap((s) => s.split(",").map((x) => x.trim()).filter(Boolean));
     return compareSchoolsCanonical(udises);
+  });
+
+  app.get("/schools/insights", async () => {
+    return getSchoolInfraInsights();
   });
 
   app.get("/schools/:udise", async (request) => {

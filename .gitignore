@@ -1,3 +1,5 @@
 *.swp
 .movies.swp
 .DS_Store
+.venv/
+movies.txt

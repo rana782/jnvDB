@@ -7,7 +7,7 @@ export function PipelineBadge({ status }: { status: string | null | undefined })
   if (s === "—") {
     return (
       <motion.span
-        className="inline-flex rounded-full border border-line px-2 py-0.5 text-xs text-muted"
+        className="inline-flex rounded-full border border-line bg-surface-3 px-2 py-0.5 text-xs text-muted"
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={fast}

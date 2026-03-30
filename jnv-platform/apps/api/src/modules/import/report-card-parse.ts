@@ -22,6 +22,7 @@ import { extractTeachersFromReportCard, teachersHasData } from "./parser/teacher
  */
 export function parseReportCardText(text: string, fallbackUdise: string): ReportCardParseResult {
   const env = loadEnv();
+  const legacy = parseReportCardTextLegacy(text, fallbackUdise);
   const { enrolmentSocial, enrolmentSocialConfidence } = extractEnrolmentSocialFromReportCard(text);
   const { enrolmentMinority, enrolmentMinorityConfidence } = extractEnrolmentMinorityFromReportCard(text);
   const { enrolmentOthers, enrolmentOthersConfidence, sectionPresent: othersSectionPresent } =
@@ -36,6 +37,7 @@ export function parseReportCardText(text: string, fallbackUdise: string): Report
   const academicYear = extractAcademicYearFromReportCard(text);
 
   const out: ReportCardParseResult = {
+    udise: legacy.udise ?? fallbackUdise,
     enrolmentSocial,
     enrolmentSocialConfidence,
   };
@@ -77,10 +79,15 @@ export function parseReportCardText(text: string, fallbackUdise: string): Report
   const headcount = extractStudentHeadcountFromReportCard(text);
   if (headcount && (headcount.total > 0 || headcount.boys > 0 || headcount.girls > 0)) {
     out.students = headcount;
+  } else if (enrolmentSocial.total != null && enrolmentSocial.total > 0) {
+    out.students = {
+      total: enrolmentSocial.total,
+      boys: headcount?.boys ?? 0,
+      girls: headcount?.girls ?? 0,
+    };
   }
 
   if (env.REPORT_CARD_LEGACY_FULL_PARSE) {
-    const legacy = parseReportCardTextLegacy(text, fallbackUdise);
     Object.assign(out, legacy);
     out.enrolmentSocial = enrolmentSocial;
     out.enrolmentSocialConfidence = enrolmentSocialConfidence;

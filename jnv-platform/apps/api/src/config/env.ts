@@ -26,6 +26,16 @@ const envSchema = z.object({
       const t = String(v).trim().toLowerCase();
       return t === "true" || t === "1" || t === "yes";
     }),
+  /** When true, run a second forced OCR pass when parsed enrolment/headcount appears empty. */
+  REPORT_CARD_OCR_WEAK_RETRY: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === false || v === "") return false;
+      if (v === true) return true;
+      const t = String(v).trim().toLowerCase();
+      return t === "true" || t === "1" || t === "yes";
+    }),
 });
 
 export type Env = z.infer<typeof envSchema>;

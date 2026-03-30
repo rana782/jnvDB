@@ -10,6 +10,7 @@ apps/api/prisma/*.db-journal
 apps/api/prisma/prisma/
 apps/web/e2e/screenshots-output/
 apps/api/coverage/
+apps/api/reports/
 apps/web/test-results/
 .DS_Store
 # Vitest mkdtemp under test/fixtures (pdf import integration tests)

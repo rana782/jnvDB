@@ -1,10 +1,11 @@
 import { getPrisma } from "../../shared/prisma.js";
 import { invalidateMapAndDashboardCache } from "../../shared/response-cache.js";
-import { aggregateSchools } from "./map-aggregate-core.js";
+import { aggregateSchools, effectiveDisplayState } from "./map-aggregate-core.js";
 import type { MapAggregateFilters, MapColorBy } from "./map.service.js";
 
 const schoolSelectRollup = {
   udise: true,
+  apiStateName: true,
   geographicState: true,
   geographicDistrict: true,
   totalStudents: true,
@@ -40,7 +41,7 @@ export async function refreshMapAggregates(): Promise<void> {
 
   const stateToRegion = new Map<string, string>();
   for (const s of schools) {
-    const st = s.geographicState || "Unknown";
+    const st = effectiveDisplayState(s);
     if (!stateToRegion.has(st)) {
       stateToRegion.set(st, s.state?.region?.name ?? "Unassigned");
     }
@@ -51,7 +52,7 @@ export async function refreshMapAggregates(): Promise<void> {
     { state: string; district: string; count: number; students: number; rs: number; rn: number; completed: number }
   >();
   for (const s of schools) {
-    const st = s.geographicState || "Unknown";
+    const st = effectiveDisplayState(s);
     const d = s.geographicDistrict?.trim() || "Unknown";
     const key = `${st}\0${d}`;
     if (!byDistrict.has(key)) {

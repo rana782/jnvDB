@@ -2,8 +2,35 @@ import { z } from "zod";
 import { getPrisma } from "../../shared/prisma.js";
 import { calculateRevenue, presetModelInputs } from "./revenue-calculator.js";
 
+const presetOverridesSchema = z
+  .object({
+    LOW: z
+      .object({
+        pricePerWash: z.number().positive().optional(),
+        washesPerStudentPerMonth: z.number().nonnegative().optional(),
+        adoptionRate: z.number().min(0).max(1).optional(),
+      })
+      .optional(),
+    MEDIUM: z
+      .object({
+        pricePerWash: z.number().positive().optional(),
+        washesPerStudentPerMonth: z.number().nonnegative().optional(),
+        adoptionRate: z.number().min(0).max(1).optional(),
+      })
+      .optional(),
+    HIGH: z
+      .object({
+        pricePerWash: z.number().positive().optional(),
+        washesPerStudentPerMonth: z.number().nonnegative().optional(),
+        adoptionRate: z.number().min(0).max(1).optional(),
+      })
+      .optional(),
+  })
+  .optional();
+
 export const revenueProjectionBodySchema = z.object({
   preset: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
+  presetOverrides: presetOverridesSchema,
   pricePerWash: z.number().positive().optional(),
   washesPerStudentPerMonth: z.number().nonnegative().optional(),
   adoptionRate: z.number().min(0).max(1).optional(),
@@ -16,6 +43,7 @@ export type RevenueProjectionBody = z.infer<typeof revenueProjectionBodySchema>;
 
 export type RevenueProjectionSchoolRow = {
   udise: string;
+  schoolName: string;
   state: string;
   totalStudents: number;
   boys: number;
@@ -44,7 +72,7 @@ function resolveModel(body: RevenueProjectionBody): {
 } {
   const preset = body.preset ?? null;
   const base = preset
-    ? presetModelInputs(preset)
+    ? presetModelInputs(preset, body.presetOverrides)
     : { pricePerWash: 30, washesPerStudentPerMonth: 4, adoptionRate: 0.85 };
   const adoption = body.adoptionRate ?? body.occupancyRate ?? base.adoptionRate;
   return {
@@ -64,6 +92,7 @@ export async function computeRevenueProjection(body: RevenueProjectionBody) {
   const schools = await prisma.school.findMany({
     select: {
       udise: true,
+      schoolName: true,
       geographicState: true,
       totalStudents: true,
       totalBoys: true,
@@ -115,6 +144,7 @@ export async function computeRevenueProjection(body: RevenueProjectionBody) {
 
     schoolRows.push({
       udise: s.udise,
+      schoolName: s.schoolName,
       state,
       totalStudents: head,
       boys: r.boysCount,

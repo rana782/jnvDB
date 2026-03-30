@@ -2,7 +2,6 @@ import { createContext, useContext, type ReactNode } from "react";
 
 export type ShellOutletContext = {
   setBreadcrumb: (node: ReactNode | null) => void;
-  setFilterOpen: (open: boolean) => void;
 };
 
 const ShellCtx = createContext<ShellOutletContext | null>(null);

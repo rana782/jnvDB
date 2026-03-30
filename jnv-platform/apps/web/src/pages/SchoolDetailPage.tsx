@@ -23,11 +23,7 @@ import { apiJson, apiPatchJson } from "../lib/api";
 import { PipelineBadge } from "../components/PipelineBadge";
 import { PIPELINE_STATUS_ORDER, pipelineStatusLabel } from "../lib/pipeline-status";
 import { useShellOutlet } from "../layout/ShellContext";
-import type {
-  EnrolmentAgeChartRow,
-  EnrolmentCategoryChartRow,
-  SchoolDetailResponse,
-} from "../types/school-api";
+import type { EnrolmentAgeChartRow, EnrolmentCategoryChartRow, SchoolDetailResponse } from "../types/school-api";
 
 async function fetchSchool(udise: string): Promise<SchoolDetailResponse> {
   return apiJson<SchoolDetailResponse>(`/api/schools/${udise}`);
@@ -44,19 +40,18 @@ const PALETTE = [
   "#6366F1",
 ] as const;
 
-const CHART_AXIS = { stroke: "#94a3b8", tick: { fill: "#64748b", fontSize: 11 } };
+const CHART_AXIS = { stroke: "#CBD5E1", tick: { fill: "#64748B", fontSize: 11 } };
 const TOOLTIP_STYLE = {
   background: "#FFFFFF",
   border: "1px solid #E2E8F0",
   borderRadius: "8px",
-  boxShadow: "0 4px 24px rgba(15,23,42,0.08)",
+  color: "#0F172A",
+  boxShadow: "0 12px 30px rgba(15,23,42,0.12)",
 };
-const LEGEND_STYLE = { color: "#64748b", fontSize: "12px", paddingTop: "8px" };
-
-const SOCIAL_ORDER = ["SC", "ST", "OBC", "General"] as const;
+const LEGEND_STYLE = { color: "#64748B", fontSize: "12px", paddingTop: "8px" };
 
 function socialCategorySlots(rows: EnrolmentCategoryChartRow[]): {
-  label: (typeof SOCIAL_ORDER)[number];
+  label: "SC" | "ST" | "OBC" | "General";
   value: number | null;
 }[] {
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
@@ -84,39 +79,12 @@ function socialCategorySlots(rows: EnrolmentCategoryChartRow[]): {
   ];
 }
 
-function confidenceBadgeClass(confidence: number): string {
-  if (confidence >= 0.7) return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  if (confidence >= 0.4) return "border-amber-200 bg-amber-50 text-amber-900";
-  return "border-line bg-slate-50 text-muted";
-}
-
 function ChartEmpty({ title, hint }: { title: string; hint: string }) {
   return (
     <div className="flex min-h-[200px] flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-line bg-canvas px-4 text-center">
       <p className="text-sm font-medium text-muted">{title}</p>
       <p className="mt-2 max-w-xs text-xs text-slate-400">{hint}</p>
     </div>
-  );
-}
-
-function ConfidencePill({ extractionConfidence }: { extractionConfidence: number | null | undefined }) {
-  if (extractionConfidence != null) {
-    return (
-      <span
-        className={`shrink-0 rounded-full border px-3 py-1 text-xs font-medium ${confidenceBadgeClass(extractionConfidence)}`}
-        title="Overall extraction confidence from the last PDF import"
-      >
-        Confidence {Math.round(extractionConfidence * 100)}%
-      </span>
-    );
-  }
-  return (
-    <span
-      className="shrink-0 rounded-full border border-line bg-canvas px-3 py-1 text-xs text-muted"
-      title="No extraction confidence stored yet"
-    >
-      No confidence
-    </span>
   );
 }
 
@@ -149,10 +117,10 @@ function toAgeLinePoints(rows: EnrolmentAgeChartRow[] | undefined): { age: strin
 
 type RevRow = { kind?: string; monthlyRevenue?: number | null; annualRevenue?: number | null };
 
-function pickCustomRevenue(school: { revenueScenarios?: unknown }): RevRow | undefined {
+function pickRevenueByKind(school: { revenueScenarios?: unknown }, kind: "LOW" | "MEDIUM" | "HIGH"): RevRow | undefined {
   const rows = school.revenueScenarios;
   if (!Array.isArray(rows)) return undefined;
-  return rows.find((r): r is RevRow => typeof r === "object" && r != null && (r as RevRow).kind === "CUSTOM") as
+  return rows.find((r): r is RevRow => typeof r === "object" && r != null && (r as RevRow).kind === kind) as
     | RevRow
     | undefined;
 }
@@ -183,7 +151,7 @@ export function SchoolDetailPage() {
   });
 
   if (q.isError) {
-    return <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">Could not load school.</div>;
+    return <div className="rounded-lg border border-danger/40 bg-danger/15 p-4 text-sm text-red-200">Could not load school.</div>;
   }
 
   if (q.isPending) {
@@ -213,10 +181,11 @@ export function SchoolDetailPage() {
     enrolmentOthers = [],
     enrolmentAge = [],
     pdfPath,
-    extractionConfidence,
   } = q.data;
 
-  const customRev = pickCustomRevenue(s);
+  const lowRev = pickRevenueByKind(s, "LOW");
+  const mediumRev = pickRevenueByKind(s, "MEDIUM");
+  const highRev = pickRevenueByKind(s, "HIGH");
   const slots = socialCategorySlots(enrolmentSocial);
   const hasSocialData = slots.some((x) => x.value != null && x.value > 0);
   const socialPieData = slots
@@ -229,17 +198,38 @@ export function SchoolDetailPage() {
   const ageLine = toAgeLinePoints(enrolmentAge);
 
   const fetching = q.isFetching ? "opacity-[0.92]" : "";
-  const pct = Math.round(s.profileCompletenessPct ?? 0);
+  const infraStatus = [
+    { key: "waterAvailable", label: "Water", ok: s.facilities?.waterAvailable === true },
+    { key: "electricityAvailable", label: "Electricity", ok: s.facilities?.electricityAvailable === true },
+    { key: "internetAvailable", label: "Internet", ok: s.facilities?.internetAvailable === true },
+    { key: "solarAvailable", label: "Solar", ok: s.facilities?.solarAvailable === true },
+    { key: "playgroundAvailable", label: "Playground", ok: s.facilities?.playgroundAvailable === true },
+    { key: "libraryAvailable", label: "Library", ok: s.facilities?.libraryAvailable === true },
+  ] as const;
+  const infraAvailable = infraStatus.reduce((a, f) => a + (f.ok ? 1 : 0), 0);
+  const infraPie = [
+    { name: "Available", value: infraAvailable, color: "#16a34a" },
+    { name: "Gap", value: Math.max(0, infraStatus.length - infraAvailable), color: "#e2e8f0" },
+  ];
+  const digitalRows = [
+    { label: "Smart class TV", count: s.sections?.digital?.smartClassTv ?? 0 },
+    { label: "Desktops", count: s.sections?.digital?.desktops ?? 0 },
+    { label: "Laptops", count: s.sections?.digital?.laptops ?? 0 },
+    { label: "Tablets", count: s.sections?.digital?.tablets ?? 0 },
+    { label: "Printers", count: s.sections?.digital?.printers ?? 0 },
+  ];
+  const digitalFunctional = digitalRows.filter((d) => d.count > 0).length;
+  const digitalTotalUnits = digitalRows.reduce((a, d) => a + d.count, 0);
   const dist = s.location?.geographicDistrict;
   const headerTitle = dist ? `${s.profile?.schoolName ?? "—"} (${dist})` : (s.profile?.schoolName ?? "—");
 
   return (
     <div className={`mx-auto max-w-7xl space-y-6 ${fetching}`}>
-      <header className="rounded-xl border border-line bg-card p-6 shadow-sm">
+      <header className="premium-panel rounded-xl p-6 premium-ring">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="text-xs font-medium uppercase tracking-wide text-muted">School</div>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-ink">{headerTitle}</h1>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight premium-gradient-text">{headerTitle}</h1>
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
               <span className="font-mono text-accent">UDISE {s.udise}</span>
               <span>{s.location?.geographicState ?? "—"}</span>
@@ -250,24 +240,14 @@ export function SchoolDetailPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <ConfidencePill extractionConfidence={extractionConfidence} />
             <motion.a
               href="#pipeline"
-              className="inline-block rounded-lg border border-line bg-canvas px-3 py-2 text-sm font-medium text-ink transition-colors duration-150 hover:border-accent/40 hover:bg-white"
+              className="inline-block rounded-lg border border-line bg-surface-3 px-3 py-2 text-sm font-medium text-ink transition-colors duration-150 hover:border-accent/40 hover:bg-surface-4"
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.97 }}
               transition={fast}
             >
               Mark status
-            </motion.a>
-            <motion.a
-              href="#notes"
-              className="inline-block rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white transition-colors duration-150 hover:bg-accent-hover"
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.97 }}
-              transition={fast}
-            >
-              Add note
             </motion.a>
           </div>
         </div>
@@ -281,7 +261,7 @@ export function SchoolDetailPage() {
           <MetricCard label="Students" value={s.enrolmentHeadcount?.totalStudents} />
           <MetricCard label="Boys" value={s.enrolmentHeadcount?.totalBoys} />
           <MetricCard label="Girls" value={s.enrolmentHeadcount?.totalGirls} />
-          <MetricCard label="Readiness" value={`${pct}%`} />
+          <MetricCard label="Infra score" value={`${infraAvailable}/${infraStatus.length}`} />
         </motion.div>
         {s.provenance?.importLastError ? (
           <p className="mt-4 text-xs text-amber-800">Import error: {s.provenance.importLastError}</p>
@@ -294,7 +274,7 @@ export function SchoolDetailPage() {
         initial="hidden"
         animate="show"
       >
-        <ChartCard title="Social category" subtitle="SC, ST, OBC, General" badge={<ConfidencePill extractionConfidence={extractionConfidence} />}>
+        <ChartCard title="Social category" subtitle="SC, ST, OBC, General">
           {!hasSocialData ? (
             <ChartEmpty
               title="No social-category data"
@@ -304,12 +284,12 @@ export function SchoolDetailPage() {
             <div className="grid gap-4 md:grid-cols-2">
               <div className="h-[220px] min-h-[200px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                  <PieChart margin={{ top: 8, right: 8, bottom: 16, left: 8 }}>
                     <Pie
                       data={socialPieData}
                       dataKey="value"
                       nameKey="name"
-                      cx="42%"
+                      cx="50%"
                       cy="50%"
                       innerRadius={48}
                       outerRadius={80}
@@ -322,10 +302,10 @@ export function SchoolDetailPage() {
                     </Pie>
                     <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number | string) => [v ?? 0, "Students"]} />
                     <Legend
-                      layout="vertical"
-                      align="right"
-                      verticalAlign="middle"
-                      wrapperStyle={LEGEND_STYLE}
+                      layout="horizontal"
+                      align="center"
+                      verticalAlign="bottom"
+                      wrapperStyle={{ ...LEGEND_STYLE, paddingTop: "12px" }}
                       formatter={(value) => <span className="text-ink">{value}</span>}
                     />
                   </PieChart>
@@ -334,7 +314,7 @@ export function SchoolDetailPage() {
               <div className="h-[220px] min-h-[200px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={socialBarData} margin={{ top: 16, right: 12, left: 0, bottom: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                    <CartesianGrid stroke="#E2E8F0" />
                     <XAxis dataKey="name" {...CHART_AXIS} />
                     <YAxis {...CHART_AXIS} allowDecimals={false} width={36} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number | string) => [v ?? 0, "Students"]} />
@@ -350,7 +330,7 @@ export function SchoolDetailPage() {
           )}
         </ChartCard>
 
-        <ChartCard title="Minority" subtitle="Composition (Total excluded)" badge={<ConfidencePill extractionConfidence={extractionConfidence} />}>
+        <ChartCard title="Minority" subtitle="Composition (Total excluded)">
           <div className="h-[260px]">
             {minorityPie.length === 0 ? (
               <ChartEmpty title="No minority breakdown" hint="Data appears after import writes minority rows." />
@@ -385,14 +365,14 @@ export function SchoolDetailPage() {
           </div>
         </ChartCard>
 
-        <ChartCard title="Age distribution" subtitle="By age band" badge={<ConfidencePill extractionConfidence={extractionConfidence} />}>
+        <ChartCard title="Age distribution" subtitle="By age band">
           <div className="h-[260px]">
             {ageLine.length === 0 ? (
               <ChartEmpty title="No age-band data" hint="Import must populate SchoolEnrolmentAge." />
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={ageLine} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                  <CartesianGrid stroke="#E2E8F0" />
                   <XAxis dataKey="age" {...CHART_AXIS} />
                   <YAxis {...CHART_AXIS} allowDecimals={false} width={36} />
                   <Tooltip
@@ -416,7 +396,7 @@ export function SchoolDetailPage() {
           </div>
         </ChartCard>
 
-        <ChartCard title="Other categories" subtitle="CWSN, EWS, etc." badge={<ConfidencePill extractionConfidence={extractionConfidence} />}>
+        <ChartCard title="Other categories" subtitle="CWSN, EWS, etc.">
           <div className="h-[260px]">
             {othersBar.length === 0 ? (
               <ChartEmpty title="No other-category rows" hint="Import must populate SchoolEnrolmentOthers." />
@@ -425,7 +405,7 @@ export function SchoolDetailPage() {
                 <div className="min-h-0 flex-1">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={othersBar} margin={{ top: 12, right: 8, left: 0, bottom: 48 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                      <CartesianGrid stroke="#E2E8F0" />
                       <XAxis
                         dataKey="name"
                         {...CHART_AXIS}
@@ -433,7 +413,7 @@ export function SchoolDetailPage() {
                         angle={-28}
                         textAnchor="end"
                         height={48}
-                        tick={{ fill: "#64748b", fontSize: 10 }}
+                        tick={{ fill: "#64748B", fontSize: 10 }}
                       />
                       <YAxis {...CHART_AXIS} allowDecimals={false} width={32} />
                       <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number | string) => [v ?? 0, "Students"]} />
@@ -462,16 +442,103 @@ export function SchoolDetailPage() {
         </ChartCard>
       </motion.div>
 
+      <motion.div
+        className="grid gap-4 lg:grid-cols-2"
+        variants={staggerContainer}
+        initial="hidden"
+        animate="show"
+      >
+        <ChartCard title="Infra coverage" subtitle="Core facilities available vs gap">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="h-[220px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                  <Pie
+                    data={infraPie}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={46}
+                    outerRadius={78}
+                    paddingAngle={2}
+                    animationDuration={300}
+                  >
+                    {infraPie.map((d, i) => (
+                      <Cell key={i} fill={d.color} stroke="#fff" strokeWidth={2} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number | string) => [v ?? 0, "Count"]} />
+                  <Legend
+                    layout="horizontal"
+                    align="center"
+                    verticalAlign="bottom"
+                    wrapperStyle={{ ...LEGEND_STYLE, paddingTop: "12px" }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="grid gap-2">
+              {infraStatus.map((f) => (
+                <div key={f.key} className="flex items-center justify-between rounded-md border border-line px-2 py-1.5 text-xs">
+                  <span className="text-ink">{f.label}</span>
+                  <span className={f.ok ? "font-medium text-emerald-300" : "font-medium text-rose-300"}>
+                    {f.ok ? "Available" : "Gap"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </ChartCard>
+
+        <ChartCard title="Digital facilities (functional)" subtitle="Installed digital assets and functional coverage">
+          <div className="mb-3 grid grid-cols-2 gap-2">
+            <div className="rounded-md border border-line bg-surface-3 px-2 py-1.5 text-xs">
+              <div className="text-muted">Functional categories</div>
+              <div className="font-semibold text-ink">
+                {digitalFunctional} / {digitalRows.length}
+              </div>
+            </div>
+            <div className="rounded-md border border-line bg-surface-3 px-2 py-1.5 text-xs">
+              <div className="text-muted">Total units</div>
+              <div className="font-semibold text-ink">{digitalTotalUnits.toLocaleString("en-IN")}</div>
+            </div>
+          </div>
+          <div className="h-[240px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={digitalRows} margin={{ top: 10, right: 10, left: 4, bottom: 24 }}>
+                <CartesianGrid stroke="#E2E8F0" />
+                <XAxis dataKey="label" tick={{ fill: "#64748B", fontSize: 10 }} interval={0} angle={-18} textAnchor="end" height={44} />
+                <YAxis {...CHART_AXIS} allowDecimals={false} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number | string) => [v ?? 0, "Units"]} />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={42}>
+                  {digitalRows.map((r, i) => (
+                    <Cell key={i} fill={r.count > 0 ? "#2563EB" : "#cbd5e1"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </ChartCard>
+      </motion.div>
+
       <div className="grid gap-4 lg:grid-cols-3">
-        <section className="rounded-xl border border-line bg-card p-5 shadow-sm">
-          <h2 className="text-sm font-semibold text-ink">Revenue (CUSTOM model)</h2>
-          <p className="mt-3 text-2xl font-semibold tabular-nums text-success">
-            {customRev?.monthlyRevenue != null ? `₹${Math.round(customRev.monthlyRevenue).toLocaleString()} / mo` : "—"}
-          </p>
-          <p className="mt-1 text-sm text-muted">
-            Yearly:{" "}
-            {customRev?.annualRevenue != null ? `₹${Math.round(customRev.annualRevenue).toLocaleString()}` : "—"}
-          </p>
+        <section className="premium-panel rounded-xl p-5 premium-ring">
+          <h2 className="text-sm font-semibold text-ink">Revenue scenarios (monthly / annual)</h2>
+          <div className="mt-3 space-y-1 text-sm">
+            <p className="text-emerald-700">
+              Low: {lowRev?.monthlyRevenue != null ? `₹${Math.round(lowRev.monthlyRevenue).toLocaleString("en-IN")} / mo` : "—"} ·{" "}
+              {lowRev?.annualRevenue != null ? `₹${Math.round(lowRev.annualRevenue).toLocaleString("en-IN")} / yr` : "—"}
+            </p>
+            <p className="text-yellow-700">
+              Medium: {mediumRev?.monthlyRevenue != null ? `₹${Math.round(mediumRev.monthlyRevenue).toLocaleString("en-IN")} / mo` : "—"} ·{" "}
+              {mediumRev?.annualRevenue != null ? `₹${Math.round(mediumRev.annualRevenue).toLocaleString("en-IN")} / yr` : "—"}
+            </p>
+            <p className="text-rose-800">
+              High: {highRev?.monthlyRevenue != null ? `₹${Math.round(highRev.monthlyRevenue).toLocaleString("en-IN")} / mo` : "—"} ·{" "}
+              {highRev?.annualRevenue != null ? `₹${Math.round(highRev.annualRevenue).toLocaleString("en-IN")} / yr` : "—"}
+            </p>
+          </div>
           <Link
             to="/revenue"
             className="mt-4 inline-block text-sm font-medium text-accent transition-colors duration-150 hover:underline"
@@ -480,7 +547,7 @@ export function SchoolDetailPage() {
           </Link>
         </section>
 
-        <section id="pipeline" className="rounded-xl border border-line bg-card p-5 shadow-sm lg:col-span-2">
+        <section id="pipeline" className="premium-panel rounded-xl p-5 premium-ring lg:col-span-2">
           <h2 className="text-sm font-semibold text-ink">Progress</h2>
           <p className="mt-1 text-xs text-muted">Pipeline status · role-gated updates</p>
           <div className="mt-4 flex flex-wrap items-end gap-4">
@@ -493,7 +560,7 @@ export function SchoolDetailPage() {
             <label className="text-xs text-muted">
               Set to
               <select
-                className="mt-1 block min-w-[11rem] rounded-lg border border-line bg-canvas px-2 py-2 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                className="mt-1 block min-w-[11rem] rounded-lg border border-line bg-surface-3 px-2 py-2 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
                 value={nextPipeline}
                 onChange={(e) => setNextPipeline(e.target.value)}
               >
@@ -516,18 +583,6 @@ export function SchoolDetailPage() {
               Save
             </motion.button>
           </div>
-          <div className="mt-4">
-            <div className="flex justify-between text-xs text-muted">
-              <span>Profile completeness</span>
-              <span className="tabular-nums text-ink">{pct}%</span>
-            </div>
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-accent to-success transition-[width] duration-300"
-                style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-              />
-            </div>
-          </div>
           {statusMut.isError ? (
             <p className="mt-2 text-xs text-amber-800">Update failed — check role permissions.</p>
           ) : null}
@@ -548,19 +603,8 @@ export function SchoolDetailPage() {
         </section>
       </div>
 
-      <section id="notes" className="rounded-xl border border-line bg-card p-5 shadow-sm">
-        <h2 className="text-sm font-semibold text-ink">Notes</h2>
-        <p className="mt-1 text-sm text-muted">
-          Structured field notes and follow-ups can be added via the API. PDF path:{" "}
-          <span className="font-mono text-xs text-ink">{pdfPath ?? "—"}</span>
-        </p>
-        <p className="mt-2 text-xs text-muted">
-          Pilot suitable: <span className="font-medium text-ink">{s.pilotSuitable ? "Yes" : "No"}</span>
-        </p>
-      </section>
-
       {udise.length === 11 && pdfPath ? (
-        <section className="rounded-xl border border-line bg-card p-5 shadow-sm">
+        <section className="premium-panel rounded-xl p-5 premium-ring">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-ink">Report card PDF</h2>
             <a
@@ -572,7 +616,7 @@ export function SchoolDetailPage() {
               Open in new tab
             </a>
           </div>
-          <div className="mt-4 overflow-hidden rounded-lg border border-line bg-canvas">
+          <div className="mt-4 overflow-hidden rounded-lg border border-line bg-surface-3">
             <iframe
               title="School PDF"
               src={`/api/schools/${udise}/pdf`}
@@ -596,7 +640,7 @@ function MetricCard({ label, value }: { label: string; value?: number | string |
   return (
     <motion.div
       variants={staggerItem}
-      className="rounded-lg border border-line bg-canvas px-4 py-3"
+      className="rounded-lg border border-line bg-surface-3 px-4 py-3"
       whileHover={{ y: -4, boxShadow: "0px 10px 30px rgba(0,0,0,0.08)" }}
       transition={fast}
     >
@@ -616,13 +660,13 @@ function ChartCard({
 }: {
   title: string;
   subtitle: string;
-  badge: ReactNode;
+  badge?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <motion.section
       variants={staggerItem}
-      className="rounded-xl border border-line bg-card p-5 shadow-sm"
+      className="premium-panel rounded-xl p-5 premium-ring"
       whileHover={{ y: -4, boxShadow: "0px 10px 30px rgba(0,0,0,0.08)" }}
       transition={fast}
     >

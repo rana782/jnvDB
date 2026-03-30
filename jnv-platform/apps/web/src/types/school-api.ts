@@ -16,6 +16,8 @@ export type SchoolListItem = {
   schoolName: string;
   geographicState: string | null;
   geographicDistrict: string | null;
+  latitude: number | null;
+  longitude: number | null;
   totalStudents: number | null;
   totalBoys: number | null;
   totalGirls: number | null;
@@ -23,7 +25,13 @@ export type SchoolListItem = {
   pipelineStatus: string;
   parsingStatus: string;
   regionCode: string | null;
+  regionName: string | null;
   stateName: string | null;
+  revenueByScenario: {
+    low: { monthly: number | null; annual: number | null };
+    medium: { monthly: number | null; annual: number | null };
+    high: { monthly: number | null; annual: number | null };
+  };
   provenance: SchoolProvenance;
 };
 
@@ -32,6 +40,24 @@ export type SchoolListResponse = {
   total: number;
   page: number;
   pageSize: number;
+};
+
+export type SchoolInfraInsights = {
+  totalSchools: number;
+  facilities: {
+    key: "water" | "electricity" | "internet" | "solar" | "playground" | "library";
+    label: string;
+    available: number;
+    missing: number;
+    pctAvailable: number;
+  }[];
+  coverageBuckets: { label: string; count: number }[];
+  digitalAccess: {
+    key: "smartClassTv" | "desktops" | "laptops" | "tablets";
+    label: string;
+    count: number;
+    pct: number;
+  }[];
 };
 
 export type EnrolmentChartRow = {
@@ -75,6 +101,27 @@ export type SchoolCanonical = {
     enrolmentOthers: EnrolmentChartRow[];
     enrolmentAge: { ageBand: string; boys: number | null; girls: number | null; total: number | null }[];
     teachers: { category: string; label: string; count: number }[];
+  };
+  sections: {
+    infra?: {
+      puccaBuilding?: boolean | null;
+      functionalToiletsB?: number | null;
+      functionalToiletsG?: number | null;
+      rampsAvailable?: boolean | null;
+      medicalCheckup?: boolean | null;
+    } | null;
+    digital?: {
+      smartClassTv?: number | null;
+      laptops?: number | null;
+      desktops?: number | null;
+      tablets?: number | null;
+      printers?: number | null;
+    } | null;
+    teachers?: { category?: string | null; label?: string | null; count?: number | null }[] | null;
+    enrolmentSocial?: unknown[] | null;
+    enrolmentMinority?: unknown[] | null;
+    enrolmentOthers?: unknown[] | null;
+    enrolmentAge?: unknown[] | null;
   };
   pipelineStatus: string;
   parsingStatus?: string;
@@ -153,6 +200,10 @@ export type DashboardSummary = {
   schoolsCompleted: number;
   portfolioMonthlyRevenue: number;
   portfolioAnnualRevenue: number;
+  /** Count of schools with `totalStudents` populated (enrolment extracted into DB). */
+  schoolsWithStudentHeadcount: number;
+  /** Count of schools linked to seeded `State` → NVS region (reference geography). */
+  schoolsLinkedToNvsRegion: number;
 };
 
 export type DashboardStateOpportunity = {
@@ -167,6 +218,12 @@ export type DashboardRegionReadiness = {
   regionName: string;
   schoolCount: number;
   avgReadiness: number | null;
+};
+
+export type DashboardStateRegionMapRow = {
+  state: string;
+  regionCode: string;
+  regionName: string;
 };
 
 export type DashboardChartStateRow = {
@@ -184,6 +241,7 @@ export type DashboardChartBucket = {
 export type DashboardOverview = DashboardSummary & {
   topStatesByOpportunity: DashboardStateOpportunity[];
   topRegionsByReadiness: DashboardRegionReadiness[];
+  stateRegionMap: DashboardStateRegionMapRow[];
   charts: {
     stateDistribution: DashboardChartStateRow[];
     revenueDistribution: DashboardChartBucket[];
@@ -204,75 +262,6 @@ export type DashboardProgress = {
   completedRevenueMonthly: number;
   /** Sum of stored CUSTOM scenario annual revenue for schools in DONE. */
   completedRevenueAnnual: number;
-};
-
-/** GET /api/dashboard/deployment */
-export type DeploymentPriorityBreakdown = {
-  readiness: number;
-  students: number;
-  infra: number;
-  digital: number;
-};
-
-export type DeploymentSchoolRow = {
-  udise: string;
-  schoolName: string;
-  geographicState: string | null;
-  geographicDistrict: string | null;
-  regionCode: string | null;
-  regionName: string | null;
-  totalStudents: number | null;
-  profileCompletenessPct: number | null;
-  monthlyRevenue: number | null;
-  pipelineStatus: string;
-  parsingStatus: string;
-  pilotSuitable: boolean | null;
-  priorityScore: number;
-  breakdown: DeploymentPriorityBreakdown;
-};
-
-export type DeploymentStateRevenueRow = {
-  state: string;
-  schoolCount: number;
-  totalStudents: number;
-  monthlyRevenueSum: number;
-  avgReadiness: number | null;
-};
-
-export type DeploymentReadinessBucket = {
-  label: string;
-  count: number;
-};
-
-export type DeploymentNextTarget = {
-  udise: string;
-  schoolName: string;
-  geographicState: string | null;
-  priorityScore: number;
-  pipelineStatus: string;
-  profileCompletenessPct: number | null;
-};
-
-export type DeploymentStrategyResponse = {
-  filters: {
-    state?: string;
-    regionId?: string;
-    minReadiness?: number;
-    maxReadiness?: number;
-    minMonthlyRevenue?: number;
-    maxMonthlyRevenue?: number;
-  };
-  progress: {
-    filteredSchoolCount: number;
-    parsingCompletePercent: number;
-    pipelineDonePercent: number;
-    pilotSchoolsCount: number;
-    nextTargets: DeploymentNextTarget[];
-  };
-  priorityWeights: { readiness: number; students: number; infra: number; digital: number };
-  topSchools: DeploymentSchoolRow[];
-  stateRevenueSummary: DeploymentStateRevenueRow[];
-  readinessDistribution: DeploymentReadinessBucket[];
 };
 
 export type MapAggMeta = {
@@ -330,6 +319,11 @@ export type RevenueProjectionModel = {
   washesPerStudentPerMonth: number;
   adoptionRate: number;
   preset: "LOW" | "MEDIUM" | "HIGH" | null;
+  presetOverrides?: {
+    LOW?: { pricePerWash?: number; washesPerStudentPerMonth?: number; adoptionRate?: number };
+    MEDIUM?: { pricePerWash?: number; washesPerStudentPerMonth?: number; adoptionRate?: number };
+    HIGH?: { pricePerWash?: number; washesPerStudentPerMonth?: number; adoptionRate?: number };
+  };
 };
 
 export type RevenueProjectionPortfolio = {
@@ -353,6 +347,7 @@ export type RevenueProjectionStateRow = {
 
 export type RevenueProjectionSchoolRow = {
   udise: string;
+  schoolName: string;
   state: string;
   totalStudents: number;
   boys: number;

@@ -43,14 +43,28 @@ export function extractDigitalFromReportCard(text: string): {
     if (n != null) values[key] = n;
   };
 
+  // Common PM SHRI compact row style:
+  // "... Internet1-YesDesktop33 ... Laptop41Tablet162Printer8 ... Projector4 ..."
+  const compactRow = window.match(
+    /Desktop\s*[:\-–.]?\s*(\d[\d,]*)[\s\S]{0,160}?Laptop\s*[:\-–.]?\s*(\d[\d,]*)[\s\S]{0,120}?Tablet\s*[:\-–.]?\s*(\d[\d,]*)[\s\S]{0,120}?Printer\s*[:\-–.]?\s*(\d[\d,]*)(?:[\s\S]{0,80}?Projector\s*[:\-–.]?\s*(\d[\d,]*))?/i,
+  );
+  if (compactRow) {
+    values.desktops = values.desktops ?? num(compactRow[1]) ?? null;
+    values.laptops = values.laptops ?? num(compactRow[2]) ?? null;
+    values.tablets = values.tablets ?? num(compactRow[3]) ?? null;
+    values.printers = values.printers ?? num(compactRow[4]) ?? null;
+    values.projectors = values.projectors ?? (compactRow[5] ? num(compactRow[5]) ?? null : null);
+  }
+
   apply("desktops", [
+    /Desktop\s*[:\-–.]?\s*(\d[\d,]*)/i,
     /\bDesktops?\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i,
     /\bDesktop\s*Computers?\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i,
     /\bPCs?\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i,
   ]);
-  apply("laptops", [/\bLaptops?\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i, /\bNotebooks?\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i]);
-  apply("tablets", [/\bTablets?\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i]);
-  apply("printers", [/\bPrinters?\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i]);
+  apply("laptops", [/Laptop\s*[:\-–.]?\s*(\d[\d,]*)/i, /\bLaptops?\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i, /\bNotebooks?\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i]);
+  apply("tablets", [/Tablet\s*[:\-–.]?\s*(\d[\d,]*)/i, /\bTablets?\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i]);
+  apply("printers", [/Printer\s*[:\-–.]?\s*(\d[\d,]*)/i, /\bPrinters?\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i]);
   apply("smartClassTv", [
     /\bSmart\s*Class(?:room)?\s*(?:TV|Kit|Units?)\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i,
     /\bSmart\s*Class\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i,
@@ -59,6 +73,10 @@ export function extractDigitalFromReportCard(text: string): {
     /\bProjectors?\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i,
     /\bLCD\s*(?:Projectors?|Panels?)\b\s*[:\-–.]?\s*(\d[\d,]*)\b/i,
   ]);
+  if (values.smartClassTv == null && values.projectors != null) {
+    // Most PDFs report projector count in the same digital block where smart-class units are not explicit.
+    values.smartClassTv = values.projectors;
+  }
 
   const anchorIdx = lines.findIndex((l) => DIGITAL_SECTION_RE.test(l));
   const start = anchorIdx >= 0 ? anchorIdx : 0;

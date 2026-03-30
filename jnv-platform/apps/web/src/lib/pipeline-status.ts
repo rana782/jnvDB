@@ -20,12 +20,12 @@ const LABELS: Record<PipelineStatus, string> = {
 
 /** Tailwind classes: subtle pill per stage. */
 const BADGE_CLASS: Record<PipelineStatus, string> = {
-  NOT_REVIEWED: "border-line bg-slate-50 text-muted",
-  REVIEWED: "border-sky-200 bg-sky-50 text-sky-900",
-  CONTACTED: "border-violet-200 bg-violet-50 text-violet-900",
-  PILOT_READY: "border-amber-200 bg-amber-50 text-amber-900",
-  PILOT_RUNNING: "border-teal-200 bg-teal-50 text-teal-900",
-  DONE: "border-emerald-200 bg-emerald-50 text-emerald-900",
+  NOT_REVIEWED: "border-line bg-surface-3 text-muted",
+  REVIEWED: "border-blue-200 bg-blue-50 text-blue-700",
+  CONTACTED: "border-violet-200 bg-violet-50 text-violet-700",
+  PILOT_READY: "border-amber-200 bg-amber-50 text-amber-700",
+  PILOT_RUNNING: "border-cyan-200 bg-cyan-50 text-cyan-700",
+  DONE: "border-emerald-200 bg-emerald-50 text-emerald-700",
 };
 
 export function pipelineStatusLabel(status: string): string {
@@ -35,5 +35,5 @@ export function pipelineStatusLabel(status: string): string {
 
 export function pipelineBadgeClass(status: string): string {
   if (status in BADGE_CLASS) return BADGE_CLASS[status as PipelineStatus];
-  return "border-line bg-slate-50 text-muted";
+  return "border-line bg-surface-3 text-muted";
 }

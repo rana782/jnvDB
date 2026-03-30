@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Env } from "./env.js";
@@ -104,4 +105,39 @@ export function toRepoRelative(absolutePath: string, repoRoot?: string): string 
   if (!repoRoot) return absolutePath;
   const rel = path.relative(repoRoot, absolutePath);
   return rel.startsWith("..") ? absolutePath : rel.split(path.sep).join("/");
+}
+
+/** All `.pdf` files under `rootDir` (recursive). Sorted for stable import order. */
+export async function collectPdfFilesRecursive(rootDir: string): Promise<string[]> {
+  const out: string[] = [];
+  const root = path.resolve(rootDir);
+
+  async function walk(dir: string): Promise<void> {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fsPromises.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        await walk(full);
+      } else if (e.isFile() && e.name.toLowerCase().endsWith(".pdf")) {
+        out.push(full);
+      }
+    }
+  }
+
+  await walk(root);
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+/** PDFs directly in `pdfsDir` only (non-recursive). */
+export async function listPdfFilesInRootOnly(pdfsDir: string): Promise<string[]> {
+  const names = await fsPromises.readdir(pdfsDir);
+  return names
+    .filter((f) => f.toLowerCase().endsWith(".pdf"))
+    .map((f) => path.join(pdfsDir, f))
+    .sort((a, b) => a.localeCompare(b));
 }

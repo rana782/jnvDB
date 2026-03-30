@@ -103,11 +103,38 @@ export const registerAnalyticsRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post("/revenue/scenarios", async (request) => {
-    const base = revenueInputSchema.parse(request.body);
+    const raw = (request.body ?? {}) as Record<string, unknown>;
+    const base = revenueInputSchema.parse(raw);
+    const presetOverrides = z
+      .object({
+        LOW: z
+          .object({
+            pricePerWash: z.number().positive().optional(),
+            washesPerStudentPerMonth: z.number().nonnegative().optional(),
+            adoptionRate: z.number().min(0).max(1).optional(),
+          })
+          .optional(),
+        MEDIUM: z
+          .object({
+            pricePerWash: z.number().positive().optional(),
+            washesPerStudentPerMonth: z.number().nonnegative().optional(),
+            adoptionRate: z.number().min(0).max(1).optional(),
+          })
+          .optional(),
+        HIGH: z
+          .object({
+            pricePerWash: z.number().positive().optional(),
+            washesPerStudentPerMonth: z.number().nonnegative().optional(),
+            adoptionRate: z.number().min(0).max(1).optional(),
+          })
+          .optional(),
+      })
+      .optional()
+      .parse(raw.presetOverrides);
     return {
-      low: scenarioPresets("LOW", base),
-      medium: scenarioPresets("MEDIUM", base),
-      high: scenarioPresets("HIGH", base),
+      low: scenarioPresets("LOW", base, presetOverrides),
+      medium: scenarioPresets("MEDIUM", base, presetOverrides),
+      high: scenarioPresets("HIGH", base, presetOverrides),
       custom: calculateRevenue(base),
     };
   });

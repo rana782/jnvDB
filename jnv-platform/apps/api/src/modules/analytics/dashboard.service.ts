@@ -1,4 +1,8 @@
 import { getPrisma } from "../../shared/prisma.js";
+import { inferNvsRegionFromDisplayState } from "../../data/nvs-states-regions.js";
+import { effectiveHeadcountFromRow } from "../../shared/effective-school-headcount.js";
+import { effectiveDisplayState } from "../map/map-aggregate-core.js";
+import { calculateRevenue } from "./revenue-calculator.js";
 
 export type DashboardStateOpportunity = {
   state: string;
@@ -14,6 +18,12 @@ export type DashboardRegionReadiness = {
   avgReadiness: number | null;
 };
 
+export type DashboardStateRegionMapRow = {
+  state: string;
+  regionCode: string;
+  regionName: string;
+};
+
 export type DashboardChartStateRow = {
   name: string;
   schools: number;
@@ -25,34 +35,140 @@ export type DashboardChartBucket = {
   count: number;
 };
 
-export async function dashboardSummary() {
-  const prisma = getPrisma();
-  const [
-    totalSchools,
-    studentsAgg,
-    pipelineDone,
-    revenueAgg,
-  ] = await Promise.all([
-    prisma.school.count(),
-    prisma.school.aggregate({
-      _sum: { totalStudents: true, totalBoys: true, totalGirls: true },
-    }),
-    prisma.school.count({ where: { pipelineStatus: "DONE" } }),
-    prisma.schoolRevenueScenario.aggregate({
-      where: { kind: "CUSTOM" },
-      _sum: { monthlyRevenue: true, annualRevenue: true },
-    }),
-  ]);
+const DEFAULT_MODEL = {
+  pricePerWash: 30,
+  adoptionRate: 0.85,
+  washesPerStudentPerMonth: 4,
+} as const;
+
+function portfolioRevenueForSchool(
+  storedMonthly: number | null | undefined,
+  storedAnnual: number | null | undefined,
+  head: { total: number; boys: number; girls: number },
+): { monthly: number; annual: number } {
+  if (storedMonthly != null && storedMonthly > 0) {
+    const annual =
+      storedAnnual != null && storedAnnual > 0 ? storedAnnual : storedMonthly * 9;
+    return { monthly: storedMonthly, annual };
+  }
+  if (head.total <= 0) return { monthly: 0, annual: 0 };
+  const r = calculateRevenue({
+    totalStudents: head.total,
+    boys: head.boys,
+    girls: head.girls,
+    ...DEFAULT_MODEL,
+  });
+  return { monthly: r.monthlyRevenue, annual: r.annualRevenue };
+}
+
+function monthlyForCharts(
+  storedMonthly: number | null | undefined,
+  head: { total: number; boys: number; girls: number },
+): number {
+  return portfolioRevenueForSchool(storedMonthly, undefined, head).monthly;
+}
+
+const schoolSelectForDashboard = {
+  geographicState: true,
+  apiStateName: true,
+  stateId: true,
+  totalStudents: true,
+  totalBoys: true,
+  totalGirls: true,
+  profileCompletenessPct: true,
+  state: { select: { region: { select: { code: true, name: true } } } },
+  enrolmentSocial: {
+    where: { category: "Total" },
+    take: 1,
+    select: { total: true, boys: true, girls: true },
+  },
+  revenueScenarios: {
+    where: { kind: "CUSTOM" as const },
+    orderBy: { computedAt: "desc" as const },
+    take: 1,
+    select: { monthlyRevenue: true, annualRevenue: true },
+  },
+} as const;
+
+/** Row shape from `schoolSelectForDashboard` (map + revenue + headcount). */
+type SchoolRow = {
+  geographicState: string | null;
+  apiStateName: string | null;
+  stateId: string | null;
+  totalStudents: number | null;
+  totalBoys: number | null;
+  totalGirls: number | null;
+  profileCompletenessPct: number | null;
+  state: { region: { code: string; name: string } | null } | null;
+  enrolmentSocial: { total: number | null; boys: number | null; girls: number | null }[];
+  revenueScenarios: { monthlyRevenue: number | null; annualRevenue: number | null }[];
+};
+
+export type DashboardSummaryPayload = {
+  totalSchools: number;
+  totalStudents: number;
+  totalBoys: number;
+  totalGirls: number;
+  schoolsCompleted: number;
+  portfolioMonthlyRevenue: number;
+  portfolioAnnualRevenue: number;
+  schoolsWithStudentHeadcount: number;
+  schoolsLinkedToNvsRegion: number;
+};
+
+function computeSummaryFromRows(
+  rows: SchoolRow[],
+  totalSchools: number,
+  pipelineDone: number,
+): DashboardSummaryPayload {
+  let totalStudents = 0;
+  let totalBoys = 0;
+  let totalGirls = 0;
+  let portfolioMonthlyRevenue = 0;
+  let portfolioAnnualRevenue = 0;
+  let schoolsWithStudentHeadcount = 0;
+  let schoolsLinkedToNvsRegion = 0;
+
+  for (const s of rows) {
+    const head = effectiveHeadcountFromRow(s);
+    totalStudents += head.total;
+    totalBoys += head.boys;
+    totalGirls += head.girls;
+    if (head.total > 0) schoolsWithStudentHeadcount += 1;
+
+    const display = effectiveDisplayState(s);
+    if (s.stateId != null || inferNvsRegionFromDisplayState(display) != null) {
+      schoolsLinkedToNvsRegion += 1;
+    }
+
+    const storedM = s.revenueScenarios[0]?.monthlyRevenue;
+    const storedA = s.revenueScenarios[0]?.annualRevenue;
+    const pr = portfolioRevenueForSchool(storedM, storedA, head);
+    portfolioMonthlyRevenue += pr.monthly;
+    portfolioAnnualRevenue += pr.annual;
+  }
 
   return {
     totalSchools,
-    totalStudents: studentsAgg._sum.totalStudents ?? 0,
-    totalBoys: studentsAgg._sum.totalBoys ?? 0,
-    totalGirls: studentsAgg._sum.totalGirls ?? 0,
+    totalStudents,
+    totalBoys,
+    totalGirls,
     schoolsCompleted: pipelineDone,
-    portfolioMonthlyRevenue: revenueAgg._sum.monthlyRevenue ?? 0,
-    portfolioAnnualRevenue: revenueAgg._sum.annualRevenue ?? 0,
+    portfolioMonthlyRevenue: round2(portfolioMonthlyRevenue),
+    portfolioAnnualRevenue: round2(portfolioAnnualRevenue),
+    schoolsWithStudentHeadcount,
+    schoolsLinkedToNvsRegion,
   };
+}
+
+export async function dashboardSummary() {
+  const prisma = getPrisma();
+  const [totalSchools, pipelineDone, rows] = await Promise.all([
+    prisma.school.count(),
+    prisma.school.count({ where: { pipelineStatus: "DONE" } }),
+    prisma.school.findMany({ select: schoolSelectForDashboard }),
+  ]);
+  return computeSummaryFromRows(rows as SchoolRow[], totalSchools, pipelineDone);
 }
 
 export async function dashboardProgress() {
@@ -102,26 +218,16 @@ export async function dashboardProgress() {
 
 /**
  * Full dashboard: summary KPIs plus rankings and chart series (single round-trip).
- * Opportunity = total enrolled students in state (primary) with CUSTOM monthly revenue sum as context.
+ * Opportunity = effective enrolled students in state (primary) with model monthly revenue sum as context.
  */
 export async function dashboardOverview() {
   const prisma = getPrisma();
-  const summary = await dashboardSummary();
-
-  const schools = await prisma.school.findMany({
-    select: {
-      geographicState: true,
-      totalStudents: true,
-      profileCompletenessPct: true,
-      state: { select: { region: { select: { code: true, name: true } } } },
-      revenueScenarios: {
-        where: { kind: "CUSTOM" },
-        orderBy: { computedAt: "desc" },
-        take: 1,
-        select: { monthlyRevenue: true },
-      },
-    },
-  });
+  const [totalSchools, pipelineDone, schools] = await Promise.all([
+    prisma.school.count(),
+    prisma.school.count({ where: { pipelineStatus: "DONE" } }),
+    prisma.school.findMany({ select: schoolSelectForDashboard }),
+  ]);
+  const summary = computeSummaryFromRows(schools as SchoolRow[], totalSchools, pipelineDone);
 
   type StateAgg = { schoolCount: number; students: number; monthlyRevenueSum: number };
   const byState = new Map<string, StateAgg>();
@@ -132,6 +238,7 @@ export async function dashboardOverview() {
     readinessN: number;
   };
   const byRegion = new Map<string, RegionAgg>();
+  const stateRegionMap = new Map<string, { regionCode: string; regionName: string }>();
 
   const revenueBucketCounts = new Map<string, number>();
   const bumpBucket = (label: string) => revenueBucketCounts.set(label, (revenueBucketCounts.get(label) ?? 0) + 1);
@@ -140,19 +247,26 @@ export async function dashboardOverview() {
   const bumpReadiness = (label: string) =>
     readinessBucketCounts.set(label, (readinessBucketCounts.get(label) ?? 0) + 1);
 
-  for (const s of schools) {
-    const stateName = s.geographicState?.trim() || "Unknown";
+  for (const s of schools as SchoolRow[]) {
+    const stateName = effectiveDisplayState(s);
     if (!byState.has(stateName)) {
       byState.set(stateName, { schoolCount: 0, students: 0, monthlyRevenueSum: 0 });
     }
     const st = byState.get(stateName)!;
     st.schoolCount += 1;
-    st.students += s.totalStudents ?? 0;
-    const monthly = s.revenueScenarios[0]?.monthlyRevenue ?? 0;
+    const head = effectiveHeadcountFromRow(s);
+    st.students += head.total;
+    const storedM = s.revenueScenarios[0]?.monthlyRevenue;
+    const monthly = monthlyForCharts(storedM, head);
     st.monthlyRevenueSum += monthly;
 
-    const regCode = s.state?.region?.code ?? "UNMAPPED";
-    const regName = s.state?.region?.name ?? "Unmapped region";
+    const inferred = inferNvsRegionFromDisplayState(stateName);
+    const regCode = s.state?.region?.code ?? inferred?.regionCode ?? "UNMAPPED";
+    const regName = s.state?.region?.name ?? inferred?.regionName ?? "Unmapped region";
+    const prev = stateRegionMap.get(stateName);
+    if (!prev || prev.regionCode === "UNMAPPED") {
+      stateRegionMap.set(stateName, { regionCode: regCode, regionName: regName });
+    }
     if (!byRegion.has(regCode)) {
       byRegion.set(regCode, { regionName: regName, schoolCount: 0, sumReadiness: 0, readinessN: 0 });
     }
@@ -163,10 +277,9 @@ export async function dashboardOverview() {
       rg.readinessN += 1;
     }
 
-    const rev = s.revenueScenarios[0]?.monthlyRevenue;
-    if (rev == null || rev <= 0) bumpBucket("No / zero model");
-    else if (rev <= 15_000) bumpBucket("₹1 – 15k / mo");
-    else if (rev <= 40_000) bumpBucket("₹15 – 40k / mo");
+    if (monthly <= 0) bumpBucket("No / zero model");
+    else if (monthly <= 15_000) bumpBucket("₹1 – 15k / mo");
+    else if (monthly <= 40_000) bumpBucket("₹15 – 40k / mo");
     else bumpBucket("₹40k+ / mo");
 
     const p = s.profileCompletenessPct;
@@ -205,6 +318,14 @@ export async function dashboardOverview() {
     })
     .slice(0, 8);
 
+  const stateRegionPairs: DashboardStateRegionMapRow[] = [...stateRegionMap.entries()]
+    .map(([state, v]) => ({
+      state,
+      regionCode: v.regionCode,
+      regionName: v.regionName,
+    }))
+    .sort((a, b) => a.state.localeCompare(b.state));
+
   const stateSorted = [...byState.entries()].sort((a, b) => b[1].schoolCount - a[1].schoolCount);
   const topN = 12;
   const chartTop = stateSorted.slice(0, topN);
@@ -236,6 +357,7 @@ export async function dashboardOverview() {
     ...summary,
     topStatesByOpportunity,
     topRegionsByReadiness,
+    stateRegionMap: stateRegionPairs,
     charts: {
       stateDistribution: chartStateDistribution,
       revenueDistribution: chartRevenueDistribution,

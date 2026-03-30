@@ -4,11 +4,27 @@ const pdfParse = require("pdf-parse") as (buf: Buffer) => Promise<{ text: string
 
 const MIN_TEXT_CHARS = 80;
 
+function normalizeExtractedText(raw: string): string {
+  return raw
+    .replace(/\u00a0/g, " ")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export type PdfExtractResult = {
   text: string;
   charCount: number;
   pages: number;
   usedOcr: boolean;
+};
+
+export type PdfExtractOptions = {
+  /** Force OCR even when embedded PDF text is present. */
+  forceOcr?: boolean;
 };
 
 async function ocrFallback(buffer: Buffer): Promise<string> {
@@ -19,7 +35,7 @@ async function ocrFallback(buffer: Buffer): Promise<string> {
       data: { text },
     } = await worker.recognize(buffer);
     await worker.terminate();
-    return (text || "").replace(/\s+/g, " ").trim();
+    return normalizeExtractedText(text || "");
   } catch {
     return "";
   }
@@ -43,7 +59,7 @@ async function extractTextWithPdfJs(buffer: Buffer): Promise<{ text: string; num
     }
   }
   return {
-    text: parts.join(" ").replace(/\s+/g, " ").trim(),
+    text: normalizeExtractedText(parts.join("\n")),
     numPages: pdf.numPages,
   };
 }
@@ -52,12 +68,15 @@ async function extractTextWithPdfJs(buffer: Buffer): Promise<{ text: string; num
  * Text-first extraction; optional Tesseract pass when embedded text is too short (best-effort on rasterized PDFs).
  * Uses pdf-parse first; falls back to pdf.js when pdf-parse cannot read the file (common for some pdfkit outputs).
  */
-export async function extractPdfText(buffer: Buffer): Promise<PdfExtractResult> {
+export async function extractPdfText(
+  buffer: Buffer,
+  options?: PdfExtractOptions,
+): Promise<PdfExtractResult> {
   let text = "";
   let pages = 0;
   try {
     const data = await pdfParse(buffer);
-    text = (data.text || "").replace(/\s+/g, " ").trim();
+    text = normalizeExtractedText(data.text || "");
     pages = data.numpages;
   } catch {
     const j = await extractTextWithPdfJs(buffer);
@@ -65,9 +84,12 @@ export async function extractPdfText(buffer: Buffer): Promise<PdfExtractResult> 
     pages = j.numPages;
   }
   let usedOcr = false;
-  if (text.length < MIN_TEXT_CHARS) {
+  if (options?.forceOcr || text.length < MIN_TEXT_CHARS) {
     const ocr = await ocrFallback(buffer);
     if (ocr.length > text.length) {
+      text = ocr;
+      usedOcr = true;
+    } else if (options?.forceOcr && ocr.length > 0) {
       text = ocr;
       usedOcr = true;
     }

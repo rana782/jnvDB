@@ -79,3 +79,16 @@ cd apps/web && npx playwright install && npm run e2e
 - `apps/web` — Dashboard, map, schools, compare, progress, revenue (all **API-only**, no production mocks).
 - `tools/pmshri-crawler` — Playwright crawler and scraped `data/` (PDFs, screenshots, optional `schools.json`). Not a second backend.
 - `docs/` — Schema glossary and QA checklist.
+
+## Deploy web on Vercel
+
+Deploy the frontend as a Vite SPA from the **monorepo root** so `npm ci` uses `package-lock.json`.
+
+1. In Vercel, set **Root Directory** to **`jnv-platform`** (not `apps/web`).
+2. Use `jnv-platform/vercel.json`: `npm ci`, `npm run build -w @jnv/web`, output **`apps/web/dist`**.
+3. Add **`VITE_API_BASE_URL`** = your public API origin (no trailing slash), e.g. `https://api.example.com`.
+4. Run the API elsewhere (Node + PostgreSQL). Set **`CORS_ORIGIN`** to your Vercel URL and **`COOKIE_SECURE=true`**.
+
+Step-by-step (GitHub push, API host, env vars): [docs/DEPLOY_FIRST_TIME.md](docs/DEPLOY_FIRST_TIME.md).
+
+SPA rewrites send all routes to `index.html`, so deep links like `/schools/12345678901` work after refresh.

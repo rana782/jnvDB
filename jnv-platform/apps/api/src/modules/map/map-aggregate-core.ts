@@ -1,8 +1,12 @@
 /** Pure aggregation for map rollups and live queries (no Prisma). */
+import { normalizeStateLabel } from "../../shared/geo-normalize.js";
+import { canonicalizeStateDisplay } from "../../shared/geo-normalize.js";
 
 export type SchoolMapRow = {
   udise: string;
   geographicState: string | null;
+  /** Scrape / schools.json state label when geographicState from PDF is missing. */
+  apiStateName: string | null;
   geographicDistrict: string | null;
   totalStudents: number | null;
   profileCompletenessPct: number | null;
@@ -12,6 +16,34 @@ export type SchoolMapRow = {
     region: { id: string; name: string; code: string } | null;
   } | null;
 };
+
+/** Heuristic: some PDFs mis-parse body text as "state" — prefer scrape `apiStateName` then. */
+export function isCorruptExtractedStateLabel(g: string | null | undefined): boolean {
+  if (!g?.trim()) return true;
+  const s = g.trim();
+  if (s.length > 48) return true;
+  if (
+    /availability|ramp|affiliation|board|special school|cwsn|handrail|functional toilets|navodaya|vidyalaya|samiti|nvs\b/i.test(
+      s,
+    )
+  )
+    return true;
+  return false;
+}
+
+/** Canonical key for state grouping (case-insensitive). */
+export function stateLabelKey(raw: string): string {
+  return normalizeStateLabel(raw);
+}
+
+/** Single source for map + dashboard state buckets (sound PDF geo beats scrape metadata). */
+export function effectiveDisplayState(s: Pick<SchoolMapRow, "geographicState" | "apiStateName">): string {
+  const g = s.geographicState?.trim();
+  const a = s.apiStateName?.trim();
+  const geo = isCorruptExtractedStateLabel(g) ? null : g;
+  const base = geo || a || "Unknown";
+  return base === "Unknown" ? base : (canonicalizeStateDisplay(base) ?? "Unknown");
+}
 
 export function aggregateSchools(schools: SchoolMapRow[]) {
   const byState = new Map<
@@ -36,7 +68,7 @@ export function aggregateSchools(schools: SchoolMapRow[]) {
   >();
 
   for (const s of schools) {
-    const st = s.geographicState || "Unknown";
+    const st = effectiveDisplayState(s);
     if (!byState.has(st)) {
       byState.set(st, {
         count: 0,

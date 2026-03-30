@@ -45,10 +45,30 @@ export type RevenueBreakdown = {
   girlsCount: number;
 };
 
+export const DEFAULT_PRESET_INPUTS = {
+  LOW: { pricePerWash: 20, washesPerStudentPerMonth: 2, adoptionRate: 0.6 },
+  MEDIUM: { pricePerWash: 30, washesPerStudentPerMonth: 4, adoptionRate: 0.85 },
+  HIGH: { pricePerWash: 40, washesPerStudentPerMonth: 6, adoptionRate: 0.95 },
+} as const;
+
+export type ScenarioPresetInputs = {
+  pricePerWash: number;
+  washesPerStudentPerMonth: number;
+  adoptionRate: number;
+};
+
+export type ScenarioPresetOverrides = Partial<{
+  LOW: Partial<ScenarioPresetInputs>;
+  MEDIUM: Partial<ScenarioPresetInputs>;
+  HIGH: Partial<ScenarioPresetInputs>;
+}>;
+
 /**
  * Simple laundry-style revenue model: effective_students * washes_per_month * price_per_wash.
  * `adoptionRate` is the share of enrolled students using the service. Revenue is split by boys/girls
  * headcount share when counts exist; otherwise 50/50 on the monthly total.
+ *
+ * Annual projection is 9 months (3 months holiday gap).
  */
 export function calculateRevenue(input: RevenueInputArg): RevenueBreakdown {
   const parsed = revenueInputSchema.parse(input);
@@ -66,7 +86,7 @@ export function calculateRevenue(input: RevenueInputArg): RevenueBreakdown {
   const effectiveStudents = headcount * parsed.adoptionRate;
   const monthlyWashes = effectiveStudents * parsed.washesPerStudentPerMonth;
   const monthlyRevenue = monthlyWashes * parsed.pricePerWash;
-  const annualRevenue = monthlyRevenue * 12;
+  const annualRevenue = monthlyRevenue * 9;
 
   const bRatio = headcount > 0 ? boys / headcount : 0.5;
   const gRatio = headcount > 0 ? girls / headcount : 0.5;
@@ -84,18 +104,25 @@ export function calculateRevenue(input: RevenueInputArg): RevenueBreakdown {
 }
 
 /** Default price, washes/month, and adoption for scenario presets. */
-export function presetModelInputs(kind: "LOW" | "MEDIUM" | "HIGH"): {
-  pricePerWash: number;
-  washesPerStudentPerMonth: number;
-  adoptionRate: number;
-} {
-  if (kind === "LOW") return { pricePerWash: 20, washesPerStudentPerMonth: 2, adoptionRate: 0.6 };
-  if (kind === "MEDIUM") return { pricePerWash: 30, washesPerStudentPerMonth: 4, adoptionRate: 0.85 };
-  return { pricePerWash: 40, washesPerStudentPerMonth: 6, adoptionRate: 0.95 };
+export function presetModelInputs(
+  kind: "LOW" | "MEDIUM" | "HIGH",
+  overrides?: ScenarioPresetOverrides,
+): ScenarioPresetInputs {
+  const base = DEFAULT_PRESET_INPUTS[kind];
+  const patch = overrides?.[kind] ?? {};
+  return {
+    pricePerWash: patch.pricePerWash ?? base.pricePerWash,
+    washesPerStudentPerMonth: patch.washesPerStudentPerMonth ?? base.washesPerStudentPerMonth,
+    adoptionRate: patch.adoptionRate ?? base.adoptionRate,
+  };
 }
 
-export function scenarioPresets(kind: "LOW" | "MEDIUM" | "HIGH", base: RevenueInputArg): RevenueBreakdown {
-  return calculateRevenue({ ...base, ...presetModelInputs(kind) });
+export function scenarioPresets(
+  kind: "LOW" | "MEDIUM" | "HIGH",
+  base: RevenueInputArg,
+  overrides?: ScenarioPresetOverrides,
+): RevenueBreakdown {
+  return calculateRevenue({ ...base, ...presetModelInputs(kind, overrides) });
 }
 
 function round2(n: number) {

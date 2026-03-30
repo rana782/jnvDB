@@ -16,13 +16,48 @@ function emptyMinority(): MinorityValues {
 }
 
 const MINORITY_ANCHOR_RE =
-  /religious\s*minority|minority\s*community|minority\s*composition|minority\s*category/i;
+  /religious\s*minority|minority\s*community|minority\s*composition|minority\s*category|enrolment\s*\(by\s*minority\)|enrolment\s*by\s*minority/i;
 
 function minorityWindow(blob: string): { window: string; anchored: boolean } {
   const m = blob.match(MINORITY_ANCHOR_RE);
   if (!m || m.index == null) return { window: blob, anchored: false };
   const start = m.index;
   return { window: blob.slice(start, start + 2200), anchored: true };
+}
+
+function compactTailTotal(digits: string): number | null {
+  const clean = digits.replace(/\D/g, "");
+  if (clean.length < 2) return null;
+  const pick = (len: number) => {
+    if (clean.length < len) return null;
+    const n = num(clean.slice(-len));
+    return n ?? null;
+  };
+  const n3 = pick(3);
+  if (n3 != null && n3 >= 50 && n3 <= 2500) return n3;
+  const n4 = pick(4);
+  if (n4 != null && n4 >= 50 && n4 <= 2500) return n4;
+  const n2 = pick(2);
+  if (n2 != null && n2 >= 50 && n2 <= 2500) return n2;
+  return null;
+}
+
+function recoverDenseMinorityTotal(lines: string[], anchorLineIdx: number): number | null {
+  const start = Math.max(0, anchorLineIdx);
+  const end = Math.min(lines.length, anchorLineIdx + 80);
+  let fallback: number | null = null;
+  for (let i = start; i < end; i++) {
+    const line = lines[i]?.replace(/\s+/g, " ").trim();
+    if (!line) continue;
+    if (!/(?:^|\b)(?:g\.?\s*total|total|minority\s*total)/i.test(line)) continue;
+    const runs = line.match(/\d{3,}/g);
+    if (!runs || runs.length === 0) continue;
+    const candidate = compactTailTotal(runs[runs.length - 1]!);
+    if (candidate == null) continue;
+    if (/(?:^|\b)g\.?\s*total/i.test(line) || /\bminority\s*total\b/i.test(line)) return candidate;
+    if (fallback == null) fallback = candidate;
+  }
+  return fallback;
 }
 
 /**
@@ -88,6 +123,9 @@ export function extractEnrolmentMinorityFromReportCard(text: string): {
         if (k && values[k] == null) values[k] = n;
       }
     }
+  }
+  if (values.total == null && anchorLineIdx >= 0) {
+    values.total = recoverDenseMinorityTotal(lines, anchorLineIdx);
   }
 
   const filled = (Object.values(values) as (number | null)[]).filter((x) => x != null).length;
