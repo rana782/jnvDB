@@ -26,7 +26,8 @@
     "e2e:verify": "npm run e2e:verify -w @jnv/web",
     "verify:stack": "npm run db:setup -w @jnv/api && npm run verify:golden-pdf -w @jnv/api && npm run import:run -w @jnv/api && npm run e2e:verify -w @jnv/web && npm run verify:capture-api -w @jnv/api",
     "verify:all": "npm run verify:golden-pdf -w @jnv/api && npm run import:bulk -w @jnv/api && npm run verify:api-all -w @jnv/api && npm run test -w @jnv/api && npm run e2e:release -w @jnv/web && npm run verify:report -w @jnv/api",
-    "release:all": "npm run verify:all"
+    "release:all": "npm run verify:all",
+    "render-build": "node scripts/render-api-build.cjs"
   },
   "devDependencies": {
     "prettier": "^3.4.2"

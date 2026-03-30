@@ -59,6 +59,14 @@ Then go back to Render and set **`CORS_ORIGIN`** to the exact Vercel URL.
 
 ---
 
+## If the build fails with “Exited with status 127”
+
+That usually means **`bash` was not found** on the build image. This repo uses **`npm run render-build`** (Node) instead—pull the latest `master`, or in **Render → jnv-api → Settings → Build Command** set:
+
+`npm run render-build`
+
+---
+
 ## Checklist
 
 | Check | Where |

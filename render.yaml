@@ -17,7 +17,7 @@ services:
     plan: free
     region: oregon
     rootDir: jnv-platform
-    buildCommand: bash scripts/render-api-build.sh
+    buildCommand: npm run render-build
     startCommand: npm run start -w @jnv/api
     healthCheckPath: /api/health
     envVars:
