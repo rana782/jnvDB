@@ -50,7 +50,9 @@ If you do not have Shell, use Render’s Postgres **SQL** console or a local too
 ## Step 3 — Vercel (website)
 
 1. [vercel.com](https://vercel.com) → **Add New Project** → import the repo.
-2. **Root Directory:** `jnv-platform`.
+2. **Root Directory:** leave **empty** (repository root) **or** set **`jnv-platform`**.  
+   - If you leave it empty, the repo root **`vercel.json`** runs install/build inside **`jnv-platform`** (where **`package-lock.json`** lives).  
+   - If you set **`jnv-platform`**, do **not** override Install Command with something that runs outside that folder — use default or `npm ci --include=dev`.
 3. **Environment variables → Production:**  
    `VITE_API_BASE_URL` = `https://<your-service>.onrender.com` (no trailing slash).
 4. Deploy.

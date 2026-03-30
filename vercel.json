@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "cd jnv-platform && npm ci --include=dev",
+  "buildCommand": "cd jnv-platform && npm run build -w @jnv/web",
+  "outputDirectory": "jnv-platform/apps/web/dist",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
