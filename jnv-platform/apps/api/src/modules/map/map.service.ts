@@ -66,6 +66,11 @@ const schoolMapSelect = {
   profileCompletenessPct: true,
   parsingStatus: true,
   state: { select: { regionId: true, region: { select: { id: true, name: true, code: true } } } },
+  revenueScenarios: {
+    orderBy: { computedAt: "desc" as const },
+    select: { kind: true, monthlyRevenue: true },
+    take: 40,
+  },
 } as const;
 
 function stripRollupFields<T extends { readinessSum?: number; readinessN?: number }>(states: T[]) {

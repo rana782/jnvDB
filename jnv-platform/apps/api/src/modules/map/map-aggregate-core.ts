@@ -15,7 +15,25 @@ export type SchoolMapRow = {
     regionId: string | null;
     region: { id: string; name: string; code: string } | null;
   } | null;
+  /** Optional; when present, first row per kind wins (use orderBy computedAt desc in Prisma). */
+  revenueScenarios?: readonly { kind: string; monthlyRevenue: number | null }[];
 };
+
+/** Aligns with school list DTO: first occurrence per kind (newest first when query orders desc). */
+export function sumMonthlyFromScenarioRows(
+  rows: readonly { kind: string; monthlyRevenue: number | null }[] | undefined,
+): { low: number; medium: number; high: number } {
+  const byK = new Map<string, number | null>();
+  for (const r of rows ?? []) {
+    const k = String(r.kind ?? "").toUpperCase();
+    if (!byK.has(k)) byK.set(k, r.monthlyRevenue ?? null);
+  }
+  const n = (key: string) => {
+    const v = byK.get(key);
+    return v != null && Number.isFinite(v) ? v : 0;
+  };
+  return { low: n("LOW"), medium: n("MEDIUM"), high: n("HIGH") };
+}
 
 /** Heuristic: some PDFs mis-parse body text as "state" — prefer scrape `apiStateName` then. */
 export function isCorruptExtractedStateLabel(g: string | null | undefined): boolean {
@@ -55,6 +73,9 @@ export function aggregateSchools(schools: SchoolMapRow[]) {
       readinessSum: number;
       readinessN: number;
       completed: number;
+      revenueLowSum: number;
+      revenueMediumSum: number;
+      revenueHighSum: number;
     }
   >();
   const byRegion = new Map<
@@ -77,11 +98,18 @@ export function aggregateSchools(schools: SchoolMapRow[]) {
         readinessSum: 0,
         readinessN: 0,
         completed: 0,
+        revenueLowSum: 0,
+        revenueMediumSum: 0,
+        revenueHighSum: 0,
       });
     }
     const agg = byState.get(st)!;
     agg.count++;
     agg.students += s.totalStudents ?? 0;
+    const rev = sumMonthlyFromScenarioRows(s.revenueScenarios);
+    agg.revenueLowSum += rev.low;
+    agg.revenueMediumSum += rev.medium;
+    agg.revenueHighSum += rev.high;
     if (s.geographicDistrict) agg.districts.add(s.geographicDistrict);
     if (s.profileCompletenessPct != null) {
       agg.readinessSum += s.profileCompletenessPct;
@@ -113,6 +141,9 @@ export function aggregateSchools(schools: SchoolMapRow[]) {
     readinessN: v.readinessN,
     avgReadiness: v.readinessN > 0 ? Math.round((v.readinessSum / v.readinessN) * 10) / 10 : null,
     completedCount: v.completed,
+    revenueLowMonthlySum: v.revenueLowSum,
+    revenueMediumMonthlySum: v.revenueMediumSum,
+    revenueHighMonthlySum: v.revenueHighSum,
   }));
 
   const maxStateSchoolCount = states.reduce((m, s) => Math.max(m, s.schoolCount), 0);

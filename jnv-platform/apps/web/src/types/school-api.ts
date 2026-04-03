@@ -282,6 +282,10 @@ export type MapAggState = {
   districtCount: number;
   avgReadiness: number | null;
   completedCount: number;
+  /** Sum of per-school LOW scenario monthly revenue in this state (₹). */
+  revenueLowMonthlySum?: number;
+  revenueMediumMonthlySum?: number;
+  revenueHighMonthlySum?: number;
 };
 
 export type MapAggRegion = {

@@ -176,8 +176,6 @@ export function MapPage() {
     staleTime: 60_000,
   });
 
-  const stateRevenueByName = useMemo(() => new Map<string, number>(), []);
-
   const stateByName = useMemo(() => {
     const m = new Map<string, MapAggState>(map.data?.states.map((s) => [s.name, s]) ?? []);
     return m;
@@ -488,7 +486,6 @@ export function MapPage() {
                 <IndiaMapCanvas
                   geo={geo.data}
                   stateByName={stateByName}
-                  stateRevenueByName={stateRevenueByName}
                   selectedState={selectedState}
                   selectedSchoolUdise={selectedSchoolUdise}
                   schoolMarkers={stateMarkers}

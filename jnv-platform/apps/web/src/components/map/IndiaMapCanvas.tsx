@@ -16,7 +16,9 @@ export type MapHoverState = {
   studentSum: number;
   avgReadiness: number | null;
   completedCount: number;
-  monthlyRevenueSum: number | null;
+  revenueLowMonthly: number | null;
+  revenueMediumMonthly: number | null;
+  revenueHighMonthly: number | null;
 } | null;
 
 type MarkerHoverState = {
@@ -113,10 +115,24 @@ function stateFill(
   return colorForState(stateName);
 }
 
+function markerLocationLabel(district: string | null | undefined, schoolName: string): string {
+  const d = (district ?? "").replace(/\s+/g, " ").trim();
+  if (d.length >= 2) return d.length > 24 ? `${d.slice(0, 22)}…` : d;
+  const tail = schoolName.replace(/^jawahar\s+navodaya\s+vidyalaya\s*,?\s*/i, "").trim();
+  if (tail.length >= 2) {
+    const parts = tail
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const pick = parts.length > 0 ? (parts[parts.length - 1] ?? tail) : tail;
+    if (pick.length >= 2 && !/^\d{11}$/.test(pick)) return pick.length > 24 ? `${pick.slice(0, 22)}…` : pick;
+  }
+  return "—";
+}
+
 type Props = {
   geo: IndiaGeoJson | undefined;
   stateByName: Map<string, MapAggState>;
-  stateRevenueByName: Map<string, number>;
   selectedState: string | null;
   selectedSchoolUdise: string | null;
   schoolMarkers: {
@@ -211,7 +227,6 @@ function placeLabels(
 function IndiaMapCanvasInner({
   geo,
   stateByName,
-  stateRevenueByName,
   selectedState,
   selectedSchoolUdise,
   schoolMarkers,
@@ -229,7 +244,6 @@ function IndiaMapCanvasInner({
       const box = mapWrapRef.current?.getBoundingClientRect();
       if (!box) return;
       const s = stateByName.get(geoName);
-      const rev = stateRevenueByName.get(geoName);
       setHover({
         name: geoName,
         x: e.clientX - box.left,
@@ -238,10 +252,12 @@ function IndiaMapCanvasInner({
         studentSum: s?.studentSum ?? 0,
         avgReadiness: s?.avgReadiness ?? null,
         completedCount: s?.completedCount ?? 0,
-        monthlyRevenueSum: rev ?? null,
+        revenueLowMonthly: s?.revenueLowMonthlySum ?? null,
+        revenueMediumMonthly: s?.revenueMediumMonthlySum ?? null,
+        revenueHighMonthly: s?.revenueHighMonthlySum ?? null,
       });
     },
-    [mapWrapRef, setHover, stateByName, stateRevenueByName],
+    [mapWrapRef, setHover, stateByName],
   );
 
   const projection = projectionForState(safeGeo, selectedState, stateByName);
@@ -321,7 +337,7 @@ function IndiaMapCanvasInner({
       })
       .filter((x): x is { id: string; x: number; y: number; w: number } => Boolean(x))
       .sort((a, b) => b.w - a.w);
-    return placeLabels(projected.map((p) => ({ id: p.id, x: p.x, y: p.y })), 22, 12, 80);
+    return placeLabels(projected.map((p) => ({ id: p.id, x: p.x, y: p.y })), 18, 10, 200);
   }, [selectedState, projector, schoolMarkers]);
   const onMarkerMouseMove = useCallback(
     (
@@ -510,7 +526,7 @@ function IndiaMapCanvasInner({
                       paintOrder="stroke"
                       style={{ pointerEvents: "none" }}
                     >
-                      {m.district ?? "District"}
+                      {markerLocationLabel(m.district, m.schoolName)}
                     </text>
                   ) : null}
                 </g>
@@ -535,6 +551,12 @@ function IndiaMapCanvasInner({
               <div>JNVs: {hover.schoolCount}</div>
               <div>Students: {hover.studentSum.toLocaleString()}</div>
               <div>Parse complete: {hover.completedCount}</div>
+              <div className="border-t border-slate-100 pt-1 text-[10px] text-slate-600 sm:text-[11px]">
+                <div className="font-medium text-slate-700">Revenue (sum / mo)</div>
+                <div className="text-emerald-700">Low: {formatRev(hover.revenueLowMonthly)}</div>
+                <div className="text-yellow-700">Medium: {formatRev(hover.revenueMediumMonthly)}</div>
+                <div className="text-rose-800">High: {formatRev(hover.revenueHighMonthly)}</div>
+              </div>
             </div>
           </motion.div>
         ) : null}
@@ -552,7 +574,7 @@ function IndiaMapCanvasInner({
           >
             <div className="text-[12px] font-semibold text-slate-900">{markerHover.school.schoolName}</div>
             <div className="mt-0.5 text-[11px] text-slate-600">
-              {markerHover.school.district ?? "Unknown district"}, {markerHover.school.state}
+              {markerLocationLabel(markerHover.school.district, markerHover.school.schoolName)}, {markerHover.school.state}
             </div>
             <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
               <div>UDISE: {markerHover.school.udise}</div>

@@ -1,6 +1,6 @@
 import { getPrisma } from "../../shared/prisma.js";
 import { invalidateMapAndDashboardCache } from "../../shared/response-cache.js";
-import { aggregateSchools, effectiveDisplayState } from "./map-aggregate-core.js";
+import { aggregateSchools, effectiveDisplayState, sumMonthlyFromScenarioRows } from "./map-aggregate-core.js";
 import type { MapAggregateFilters, MapColorBy } from "./map.service.js";
 
 const schoolSelectRollup = {
@@ -107,17 +107,54 @@ export async function ensureMapRollupsPopulated(): Promise<void> {
   }
 }
 
+/** Portfolio-wide monthly revenue sums by display state (rollup rows omit revenue; merge at read). */
+async function monthlyRevenueByDisplayState(): Promise<
+  Map<string, { low: number; medium: number; high: number }>
+> {
+  const prisma = getPrisma();
+  const schools = await prisma.school.findMany({
+    select: {
+      geographicState: true,
+      apiStateName: true,
+      revenueScenarios: {
+        orderBy: { computedAt: "desc" },
+        select: { kind: true, monthlyRevenue: true },
+        take: 40,
+      },
+    },
+  });
+  const out = new Map<string, { low: number; medium: number; high: number }>();
+  for (const s of schools) {
+    const st = effectiveDisplayState(s);
+    if (st === "Unknown") continue;
+    const add = sumMonthlyFromScenarioRows(s.revenueScenarios);
+    const cur = out.get(st) ?? { low: 0, medium: 0, high: 0 };
+    cur.low += add.low;
+    cur.medium += add.medium;
+    cur.high += add.high;
+    out.set(st, cur);
+  }
+  return out;
+}
+
 export async function readMapStateFromRollup(colorBy: MapColorBy) {
   const prisma = getPrisma();
   const rows = await prisma.mapStateAggregate.findMany({ orderBy: { stateName: "asc" } });
-  const states = rows.map((r) => ({
-    name: r.stateName,
-    schoolCount: r.schoolCount,
-    studentSum: r.studentSum,
-    districtCount: r.districtCount,
-    avgReadiness: roundReadiness(r.readinessSum, r.readinessN),
-    completedCount: r.completedCount,
-  }));
+  const revenueByState = await monthlyRevenueByDisplayState();
+  const states = rows.map((r) => {
+    const rev = revenueByState.get(r.stateName) ?? { low: 0, medium: 0, high: 0 };
+    return {
+      name: r.stateName,
+      schoolCount: r.schoolCount,
+      studentSum: r.studentSum,
+      districtCount: r.districtCount,
+      avgReadiness: roundReadiness(r.readinessSum, r.readinessN),
+      completedCount: r.completedCount,
+      revenueLowMonthlySum: rev.low,
+      revenueMediumMonthlySum: rev.medium,
+      revenueHighMonthlySum: rev.high,
+    };
+  });
 
   const byRegion = new Map<string, { count: number; students: number; rs: number; rn: number }>();
   for (const r of rows) {
