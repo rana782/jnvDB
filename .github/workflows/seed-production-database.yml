@@ -1,15 +1,14 @@
-# One-time or occasional: seed roles + founder user on production Postgres (e.g. Render).
-# Render free tier has no Shell — run this from GitHub instead.
+# Manual only: seed regions/states/roles + founder user (argon2 hash) on production Postgres (e.g. Supabase).
 #
-# Setup (once):
-#   Repo → Settings → Secrets and variables → Actions → New repository secret
-#   - PRODUCTION_DATABASE_URL = External Database URL from Render Postgres (postgresql://...)
+# Repo → Settings → Secrets and variables → Actions — set:
+#   Required:
+#     - DATABASE_URL  OR  PRODUCTION_DATABASE_URL  (postgresql://…?sslmode=require)
+#     - SEED_ADMIN_PASSWORD  (plain text; hashed in seed — never logged)
+#   Optional:
+#     - SEED_ADMIN_ROLLCODE  (login id; default founder if unset)
+#     - SEED_FOUNDER_PASSWORD / SEED_FOUNDER_ROLLCODE  (legacy aliases for the same fields)
 #
-# Optional secrets (omit entirely if you want defaults: rollcode founder / password change-me-in-prod):
-#   - SEED_FOUNDER_PASSWORD
-#   - SEED_FOUNDER_ROLLCODE
-#
-# Run: Actions → "Seed production database" → Run workflow → type SEED → Run workflow
+# Run: Actions → "Seed production database" → Run workflow → confirm = SEED
 
 name: Seed production database
 
@@ -33,10 +32,6 @@ jobs:
           cache: npm
           cache-dependency-path: jnv-platform/package-lock.json
 
-      - name: Patch Prisma datasource to PostgreSQL
-        working-directory: jnv-platform
-        run: sed -i 's/provider = "sqlite"/provider = "postgresql"/' apps/api/prisma/schema.prisma
-
       - name: Install dependencies
         working-directory: jnv-platform
         run: npm ci --include=dev
@@ -48,7 +43,9 @@ jobs:
       - name: Run Prisma seed
         working-directory: jnv-platform/apps/api
         env:
-          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.PRODUCTION_DATABASE_URL }}
+          SEED_ADMIN_PASSWORD: ${{ secrets.SEED_ADMIN_PASSWORD }}
+          SEED_ADMIN_ROLLCODE: ${{ secrets.SEED_ADMIN_ROLLCODE }}
           SEED_FOUNDER_PASSWORD: ${{ secrets.SEED_FOUNDER_PASSWORD }}
           SEED_FOUNDER_ROLLCODE: ${{ secrets.SEED_FOUNDER_ROLLCODE }}
         run: npx prisma db seed

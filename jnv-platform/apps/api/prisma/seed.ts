@@ -99,9 +99,18 @@ async function main() {
     });
   }
 
-  const defaultPassword =
-    (process.env.SEED_FOUNDER_PASSWORD ?? "").trim() || "change-me-in-prod";
-  const rollcode = (process.env.SEED_FOUNDER_ROLLCODE ?? "").trim() || "founder";
+  const isCi = process.env.GITHUB_ACTIONS === "true";
+  const passwordFromEnv =
+    (process.env.SEED_ADMIN_PASSWORD ?? process.env.SEED_FOUNDER_PASSWORD ?? "").trim();
+  const defaultPassword = passwordFromEnv || (isCi ? "" : "change-me-in-prod");
+  if (isCi && !defaultPassword) {
+    throw new Error(
+      "SEED_ADMIN_PASSWORD or SEED_FOUNDER_PASSWORD must be set (GitHub Actions).",
+    );
+  }
+  const rollcode =
+    (process.env.SEED_ADMIN_ROLLCODE ?? process.env.SEED_FOUNDER_ROLLCODE ?? "").trim() ||
+    "founder";
   const hash = await argon2.hash(defaultPassword);
 
   const superAdminRole = await prisma.role.findUniqueOrThrow({ where: { name: "super_admin" } });
@@ -129,7 +138,21 @@ async function main() {
     update: {},
   });
 
-  console.log("Seed OK. Login rollcode:", rollcode, "(set SEED_FOUNDER_PASSWORD in env to override default)");
+  const verified = await prisma.founderUser.findUnique({
+    where: { rollcode },
+    select: { id: true, passwordHash: true },
+  });
+  if (!verified?.passwordHash?.startsWith("$argon")) {
+    throw new Error("Seed validation failed: expected argon2 passwordHash on founder user.");
+  }
+  const dupes = await prisma.founderUser.count({ where: { rollcode } });
+  if (dupes !== 1) {
+    throw new Error(`Seed validation failed: expected one row for rollcode, got ${dupes}.`);
+  }
+
+  console.log(
+    "Seed OK. Founder login rollcode configured (password from env only; use SEED_ADMIN_PASSWORD in GitHub Actions).",
+  );
 }
 
 main()
