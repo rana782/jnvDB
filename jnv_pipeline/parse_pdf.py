@@ -2,18 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .models import AgeRow, CategoryRow, FacilitiesRow, ParsedSchoolData, SchoolRow
+from .models import AgeRow, CategoryRow, FacilitiesRow, ParsedSchoolData, SchoolRow, TeacherRow
 from .parse_ocr import ocr_pdf_text
 from .parse_tables import (
     AGE_ALLOWED,
     MINORITY_ALLOWED,
     OTHERS_ALLOWED,
     SOCIAL_ALLOWED,
+    ensure_others_total_from_rollups,
+    merge_rte_ews_into_others,
     parse_age_section,
     parse_category_section,
     parse_facilities,
     parse_profile,
     parse_student_totals,
+    parse_teachers_section,
 )
 from .parse_text import extract_pdf_text, text_is_weak
 from .utils import score_ratio
@@ -37,8 +40,10 @@ def parse_pdf_file(pdf_path: Path, force_ocr: bool = False) -> ParsedSchoolData:
     social = parse_category_section(text, SOCIAL_ALLOWED, "Enrolment (By Social Category)")
     minority = parse_category_section(text, MINORITY_ALLOWED, "Enrolment (By Minority)")
     others = parse_category_section(text, OTHERS_ALLOWED, "Enrolment (By Others)")
+    others = merge_rte_ews_into_others(others, text)
     age = parse_age_section(text)
     facilities = parse_facilities(text)
+    teachers = parse_teachers_section(text)
 
     school = SchoolRow(
         udise=str(profile.get("udise") or ""),
@@ -78,12 +83,22 @@ def parse_pdf_file(pdf_path: Path, force_ocr: bool = False) -> ParsedSchoolData:
             if school.total_girls is None:
                 school.total_girls = social_row_total.get("girls") if isinstance(social_row_total.get("girls"), int) else None
 
+    others = ensure_others_total_from_rollups(
+        others,
+        {
+            "total_students": school.total_students,
+            "total_boys": school.total_boys,
+            "total_girls": school.total_girls,
+        },
+    )
+
     parsed = ParsedSchoolData(
         school=school,
         social=[CategoryRow(udise=school.udise, **r) for r in social],
         minority=[CategoryRow(udise=school.udise, **r) for r in minority],
         others=[CategoryRow(udise=school.udise, **r) for r in others],
         age=[AgeRow(udise=school.udise, **r) for r in age if str(r.get("age_band")) in AGE_ALLOWED],
+        teachers=[TeacherRow(udise=school.udise, **r) for r in teachers],
         facilities=FacilitiesRow(udise=school.udise, **facilities),
     )
     parsed.school.parse_confidence = _compute_confidence(parsed)

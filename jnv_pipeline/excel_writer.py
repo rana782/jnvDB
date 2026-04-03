@@ -46,6 +46,7 @@ SHEET_HEADERS: dict[str, list[str]] = {
         "medical_checkups",
         "ramps_available",
     ],
+    "teachers": ["udise", "category", "label", "count"],
 }
 
 

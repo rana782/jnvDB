@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from pathlib import Path
@@ -7,9 +8,10 @@ from pathlib import Path
 import pandas as pd
 
 
-ROOT = Path(r"C:\Users\RANA\Desktop\learn_git")
+ROOT = Path(__file__).resolve().parents[1]
 MASTER_XLSX = ROOT / "jnv_pipeline" / "output" / "JNV_bulk_import_ready_MASTER.xlsx"
 DEV_DB = ROOT / "jnv-platform" / "apps" / "api" / "prisma" / "dev.db"
+EXTRACTIONS_DIR = ROOT / "jnv-platform" / "tools" / "pmshri-crawler" / "data" / "extractions"
 
 
 ALIASES = {
@@ -56,10 +58,26 @@ def nfloat(v: object) -> float | None:
 
 
 def nbool(v: object) -> int | None:
+    if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v):
+        return None
+    if type(v) is bool:
+        return 1 if v else 0
+    if isinstance(v, (int, float)):
+        if isinstance(v, float) and pd.isna(v):
+            return None
+        try:
+            iv = int(v)
+        except (ValueError, OverflowError):
+            return None
+        if iv == 1:
+            return 1
+        if iv == 0:
+            return 0
+        return None
     s = nstr(v).lower()
-    if s in {"true", "1", "yes"}:
+    if s in {"true", "1", "yes", "y"}:
         return 1
-    if s in {"false", "0", "no"}:
+    if s in {"false", "0", "no", "n"}:
         return 0
     return None
 
@@ -94,6 +112,69 @@ def group_by_udise(df: pd.DataFrame) -> dict[str, list[dict]]:
     return out
 
 
+def load_extractions_by_udise(ext_dir: Path) -> dict[str, dict]:
+    """UDISE -> full crawler JSON (same shape as SchoolReportCardSnapshot.payload)."""
+    out: dict[str, dict] = {}
+    if not ext_dir.is_dir():
+        return out
+    for p in sorted(ext_dir.glob("*.json")):
+        stem = p.stem.replace(".0", "")
+        if len(stem) != 11 or not stem.isdigit():
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict):
+            out[stem] = data
+    return out
+
+
+def upsert_report_card_snapshot_sqlite(
+    cur: sqlite3.Cursor,
+    udise: str,
+    snap: dict,
+    school_academic_year: str | None,
+    school_conf: float | None,
+) -> None:
+    prov = snap.get("provenance") if isinstance(snap.get("provenance"), dict) else {}
+    acad = nstr(prov.get("academicYear")) or (school_academic_year or None)
+    acad = acad or None
+    src_hash = nstr(prov.get("sourcePdfHash")) or "pipeline-excel-import"
+    pdf_rel = nstr(prov.get("pdfRelativePath")) or f"tools/pmshri-crawler/data/extractions/{udise}.json"
+    overall = school_conf
+    if overall is None and isinstance(snap.get("confidenceBySection"), dict):
+        nums = [float(x) for x in snap["confidenceBySection"].values() if isinstance(x, (int, float))]
+        if nums:
+            overall = float(sum(nums) / len(nums))
+    if overall is None:
+        overall = 0.5
+    extracted_raw = prov.get("extractedAt")
+    extracted_at: str | None
+    if isinstance(extracted_raw, str) and extracted_raw.strip():
+        extracted_at = extracted_raw.strip()
+    else:
+        extracted_at = None
+    payload_str = json.dumps(snap, ensure_ascii=False)
+    cur.execute(
+        """
+        INSERT INTO "SchoolReportCardSnapshot" (
+          "udise","academicYear","sourcePdfHash","pdfRelativePath","screenshotRelativePath",
+          "payload","overallConfidence","extractedAt","updatedAt"
+        ) VALUES (?,?,?,?,?,?,?,COALESCE(?, CURRENT_TIMESTAMP),CURRENT_TIMESTAMP)
+        ON CONFLICT("udise") DO UPDATE SET
+          "academicYear"=excluded."academicYear",
+          "sourcePdfHash"=excluded."sourcePdfHash",
+          "pdfRelativePath"=excluded."pdfRelativePath",
+          "payload"=excluded."payload",
+          "overallConfidence"=excluded."overallConfidence",
+          "extractedAt"=excluded."extractedAt",
+          "updatedAt"=CURRENT_TIMESTAMP
+        """,
+        (udise, acad, src_hash, pdf_rel, None, payload_str, overall, extracted_at),
+    )
+
+
 def main() -> None:
     if not MASTER_XLSX.exists():
         raise FileNotFoundError(f"Master workbook not found: {MASTER_XLSX}")
@@ -105,13 +186,16 @@ def main() -> None:
     minority = pd.read_excel(MASTER_XLSX, sheet_name="enrolment_minority", dtype=object)
     others = pd.read_excel(MASTER_XLSX, sheet_name="enrolment_others", dtype=object)
     age = pd.read_excel(MASTER_XLSX, sheet_name="enrolment_age", dtype=object)
+    teachers = pd.read_excel(MASTER_XLSX, sheet_name="teachers", dtype=object)
     facilities = pd.read_excel(MASTER_XLSX, sheet_name="facilities", dtype=object)
 
     social_map = group_by_udise(social)
     minority_map = group_by_udise(minority)
     others_map = group_by_udise(others)
     age_map = group_by_udise(age)
+    teachers_map = group_by_udise(teachers)
     fac_map = {nudise(r.get("udise")): r.to_dict() for _, r in facilities.iterrows() if nudise(r.get("udise"))}
+    extraction_by_udise = load_extractions_by_udise(EXTRACTIONS_DIR)
 
     con = sqlite3.connect(DEV_DB)
     con.row_factory = sqlite3.Row
@@ -176,67 +260,73 @@ def main() -> None:
                 ),
             )
 
-            f = fac_map.get(udise, {})
-            water = nbool(f.get("water_available"))
-            electricity = nbool(f.get("electricity_available"))
-            internet = nbool(f.get("internet_available"))
-            solar = nbool(f.get("solar_available"))
-            playground = nbool(f.get("playground_available"))
-            library = nbool(f.get("library_available"))
-            ramps = nbool(f.get("ramps_available"))
-            medical = nbool(f.get("medical_checkups"))
-            tb = nint(f.get("functional_toilets_b"))
-            tg = nint(f.get("functional_toilets_g"))
-            desktops = nint(f.get("desktops"))
-            laptops = nint(f.get("laptops"))
-            tablets = nint(f.get("tablets"))
-            printers = nint(f.get("printers"))
-            smart_tv = nint(f.get("smart_class_tv"))
-            projectors = nint(f.get("projectors"))
+            if udise in fac_map:
+                f = fac_map[udise]
+                water = nbool(f.get("water_available"))
+                electricity = nbool(f.get("electricity_available"))
+                internet = nbool(f.get("internet_available"))
+                solar = nbool(f.get("solar_available"))
+                playground = nbool(f.get("playground_available"))
+                library = nbool(f.get("library_available"))
+                ramps = nbool(f.get("ramps_available"))
+                medical = nbool(f.get("medical_checkups"))
+                tb = nint(f.get("functional_toilets_b"))
+                tg = nint(f.get("functional_toilets_g"))
+                desktops = nint(f.get("desktops"))
+                laptops = nint(f.get("laptops"))
+                tablets = nint(f.get("tablets"))
+                printers = nint(f.get("printers"))
+                smart_tv = nint(f.get("smart_class_tv"))
+                projectors = nint(f.get("projectors"))
+                extra_payload: dict[str, int] = {}
+                if projectors is not None:
+                    extra_payload["projectors"] = projectors
+                extra_json = json.dumps(extra_payload) if extra_payload else None
 
-            cur.execute(
-                """
-                UPDATE "School" SET
-                  "waterAvailable"=?,
-                  "electricityAvailable"=?,
-                  "internetAvailable"=?,
-                  "solarAvailable"=?,
-                  "playgroundAvailable"=?,
-                  "libraryAvailable"=?,
-                  "updatedAt"=CURRENT_TIMESTAMP
-                WHERE "udise"=?
-                """,
-                (water, electricity, internet, solar, playground, library, udise),
-            )
+                cur.execute(
+                    """
+                    UPDATE "School" SET
+                      "waterAvailable"=?,
+                      "electricityAvailable"=?,
+                      "internetAvailable"=?,
+                      "solarAvailable"=?,
+                      "playgroundAvailable"=?,
+                      "libraryAvailable"=?,
+                      "updatedAt"=CURRENT_TIMESTAMP
+                    WHERE "udise"=?
+                    """,
+                    (water, electricity, internet, solar, playground, library, udise),
+                )
 
-            cur.execute(
-                """
-                INSERT INTO "SchoolInfra" ("udise","functionalToiletsB","functionalToiletsG","rampsAvailable","medicalCheckup","updatedAt")
-                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT("udise") DO UPDATE SET
-                  "functionalToiletsB"=excluded."functionalToiletsB",
-                  "functionalToiletsG"=excluded."functionalToiletsG",
-                  "rampsAvailable"=excluded."rampsAvailable",
-                  "medicalCheckup"=excluded."medicalCheckup",
-                  "updatedAt"=CURRENT_TIMESTAMP
-                """,
-                (udise, tb, tg, ramps, medical),
-            )
+                cur.execute(
+                    """
+                    INSERT INTO "SchoolInfra" ("udise","functionalToiletsB","functionalToiletsG","rampsAvailable","medicalCheckup","updatedAt")
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT("udise") DO UPDATE SET
+                      "functionalToiletsB"=excluded."functionalToiletsB",
+                      "functionalToiletsG"=excluded."functionalToiletsG",
+                      "rampsAvailable"=excluded."rampsAvailable",
+                      "medicalCheckup"=excluded."medicalCheckup",
+                      "updatedAt"=CURRENT_TIMESTAMP
+                    """,
+                    (udise, tb, tg, ramps, medical),
+                )
 
-            cur.execute(
-                """
-                INSERT INTO "SchoolDigitalFacilities" ("udise","smartClassTv","laptops","desktops","tablets","printers","updatedAt")
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT("udise") DO UPDATE SET
-                  "smartClassTv"=excluded."smartClassTv",
-                  "laptops"=excluded."laptops",
-                  "desktops"=excluded."desktops",
-                  "tablets"=excluded."tablets",
-                  "printers"=excluded."printers",
-                  "updatedAt"=CURRENT_TIMESTAMP
-                """,
-                (udise, smart_tv, laptops, desktops, tablets, printers),
-            )
+                cur.execute(
+                    """
+                    INSERT INTO "SchoolDigitalFacilities" ("udise","smartClassTv","laptops","desktops","tablets","printers","extra","updatedAt")
+                    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT("udise") DO UPDATE SET
+                      "smartClassTv"=excluded."smartClassTv",
+                      "laptops"=excluded."laptops",
+                      "desktops"=excluded."desktops",
+                      "tablets"=excluded."tablets",
+                      "printers"=excluded."printers",
+                      "extra"=CASE WHEN excluded."extra" IS NOT NULL THEN excluded."extra" ELSE "SchoolDigitalFacilities"."extra" END,
+                      "updatedAt"=CURRENT_TIMESTAMP
+                    """,
+                    (udise, smart_tv, laptops, desktops, tablets, printers, extra_json),
+                )
 
             for table in ["SchoolEnrolmentSocial", "SchoolEnrolmentMinority", "SchoolEnrolmentOthers", "SchoolEnrolmentAge"]:
                 cur.execute(f'DELETE FROM "{table}" WHERE "udise"=?', (udise,))
@@ -273,6 +363,20 @@ def main() -> None:
                     """,
                     (uuid.uuid4().hex[:25], udise, nstr(r.get("age_band")), nint(r.get("boys")), nint(r.get("girls")), nint(r.get("total"))),
                 )
+            
+            cur.execute('DELETE FROM "SchoolTeacherBreakdown" WHERE "udise"=?', (udise,))
+            for r in teachers_map.get(udise, []):
+                cur.execute(
+                    """
+                    INSERT INTO "SchoolTeacherBreakdown" ("id","udise","category","label","count","createdAt")
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (uuid.uuid4().hex[:25], udise, nstr(r.get("category")), nstr(r.get("label")), nint(r.get("count"))),
+                )
+
+            snap = extraction_by_udise.get(udise)
+            if isinstance(snap, dict) and snap:
+                upsert_report_card_snapshot_sqlite(cur, udise, snap, academic_year or None, conf)
 
             imported += 1
 

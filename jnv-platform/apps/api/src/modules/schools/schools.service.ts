@@ -268,7 +268,23 @@ export async function listSchools(pagination: PaginationQuery, filters: SchoolFi
 
   const where: Prisma.SchoolWhereInput = and.length ? { AND: and } : {};
 
-  const orderField = pagination.sort?.replace(/^-/, "") || "updatedAt";
+  /** Only scalar School columns — arbitrary `sort` must not reach Prisma (invalid field → 500). */
+  const sortable = new Set([
+    "updatedAt",
+    "createdAt",
+    "schoolName",
+    "udise",
+    "totalStudents",
+    "totalBoys",
+    "totalGirls",
+    "profileCompletenessPct",
+    "geographicState",
+    "geographicDistrict",
+    "pipelineStatus",
+    "parsingStatus",
+  ]);
+  const rawField = pagination.sort?.replace(/^-/, "").trim() || "";
+  const orderField = sortable.has(rawField) ? rawField : "updatedAt";
   const orderDir = pagination.order;
   const orderBy = { [orderField]: orderDir } as Record<string, "asc" | "desc">;
 

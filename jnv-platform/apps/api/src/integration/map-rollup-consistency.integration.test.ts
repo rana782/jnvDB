@@ -1,33 +1,24 @@
 /**
  * Map rollups vs school rows after import (state totals, district sums).
+ * Uses DATABASE_URL from the environment (PostgreSQL).
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { clearEnvCacheForTests } from "../config/env.js";
 import { mapDistrictAggregates, mapStateAggregates } from "../modules/map/map.service.js";
 import { getPrisma, resetPrismaForTests } from "../shared/prisma.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_ROOT = path.resolve(__dirname, "..", "..");
 const DEV_DB_PATH = path.join(API_ROOT, "prisma", "dev.db");
-const DEV_DB_URL = `file:${DEV_DB_PATH.replace(/\\/g, "/")}`;
 
-let savedDatabaseUrl: string | undefined;
-
-describe("Map rollup consistency (dev.db)", () => {
+describe("Map rollup consistency", () => {
   beforeAll(async () => {
-    savedDatabaseUrl = process.env.DATABASE_URL;
-    process.env.DATABASE_URL = DEV_DB_URL;
-    clearEnvCacheForTests();
     await resetPrismaForTests();
   });
 
   afterAll(async () => {
-    process.env.DATABASE_URL = savedDatabaseUrl;
-    if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-    clearEnvCacheForTests();
     await resetPrismaForTests();
   });
 

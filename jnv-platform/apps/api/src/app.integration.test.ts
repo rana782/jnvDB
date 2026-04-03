@@ -7,7 +7,7 @@ describe("buildApp", () => {
     await app?.close();
   });
 
-  it("serves health (SQLite default when DATABASE_URL unset)", async () => {
+  it("serves health", async () => {
     app = await buildApp();
     const res = await app.inject({ method: "GET", url: "/api/health" });
     expect(res.statusCode).toBe(200);

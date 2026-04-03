@@ -1,0 +1,22 @@
+
+> data:import-sqlite
+> node scripts/import-master-sqlite.cjs
+
+Imported 620 school records from master workbook into dev.db
+
+> @jnv/api@1.0.0 dev:reconcile-dashboard
+> tsx scripts/dev-reconcile-dashboard-data.ts
+
+Reconciling school KPIs for dashboard / map…
+{
+  "schoolsPatched": 620,
+  "revenueSchoolsTouched": 624,
+  "derivationsRecomputed": 624,
+  "recomputeSet": 624
+}
+Done. {
+  schoolsPatched: 620,
+  revenueSchoolsTouched: 624,
+  derivationsRecomputed: 624
+}
+Done. SQLite dev.db updated and dashboard/map reconciled.

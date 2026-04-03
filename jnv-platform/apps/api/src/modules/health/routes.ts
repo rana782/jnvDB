@@ -1,9 +1,28 @@
 import type { FastifyPluginAsync } from "fastify";
 import { resolveScrapedDataPaths } from "../../config/paths.js";
 import { loadEnv } from "../../config/env.js";
+import { getPrisma } from "../../shared/prisma.js";
 
 export const healthRoutes: FastifyPluginAsync = async (app) => {
-  app.get("/health", async () => ({ ok: true, service: "jnv-api" }));
+  app.get("/health", async (_req, reply) => {
+    try {
+      await getPrisma().$queryRawUnsafe("SELECT 1");
+      return {
+        ok: true,
+        service: "jnv-api",
+        status: "ok",
+        db: "connected",
+      };
+    } catch (e) {
+      return reply.code(503).send({
+        ok: false,
+        service: "jnv-api",
+        status: "error",
+        db: "disconnected",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  });
 
   app.get("/health/data-paths", async () => {
     const env = loadEnv();

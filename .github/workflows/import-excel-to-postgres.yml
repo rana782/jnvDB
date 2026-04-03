@@ -1,0 +1,51 @@
+# Loads jnv_pipeline/output/JNV_bulk_import_ready_MASTER.xlsx into PostgreSQL.
+# Requires: master workbook committed + secret PRODUCTION_DATABASE_URL
+
+name: Import bulk Excel to Postgres
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type IMPORT to run"
+        required: true
+
+jobs:
+  import:
+    if: github.event.inputs.confirm == 'IMPORT'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: jnv_pipeline/requirements.txt
+
+      - name: Install Python deps
+        run: pip install -r jnv_pipeline/requirements.txt
+
+      - name: Verify master workbook
+        run: test -f jnv_pipeline/output/JNV_bulk_import_ready_MASTER.xlsx
+
+      - name: Import Excel → Postgres
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: python jnv_pipeline/import_master_to_postgres.py
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: jnv-platform/package-lock.json
+
+      - name: Reconcile map & dashboard (Prisma)
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        working-directory: jnv-platform
+        run: |
+          sed -i 's/provider = "sqlite"/provider = "postgresql"/' apps/api/prisma/schema.prisma
+          npm ci
+          npm run db:generate -w @jnv/api
+          npx tsx apps/api/scripts/dev-reconcile-dashboard-data.ts

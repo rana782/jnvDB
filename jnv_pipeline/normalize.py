@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .models import AgeRow, CategoryRow, FacilitiesRow, ParsedSchoolData, SchoolRow
+from .models import AgeRow, CategoryRow, FacilitiesRow, ParsedSchoolData, SchoolRow, TeacherRow
 from .region_map import normalize_state_name, region_for_state
 
 UDISE_STATE_PREFIX = {
@@ -112,6 +112,7 @@ def flatten_records(records: list[ParsedSchoolData]) -> dict[str, list[dict]]:
     minority = [x.as_dict() for r in records for x in r.minority]
     others = [x.as_dict() for r in records for x in r.others]
     age = [x.as_dict() for r in records for x in r.age]
+    teachers = [x.as_dict() for r in records for x in r.teachers]
     facilities = [r.facilities.as_dict() for r in records if r.facilities is not None]
     return {
         "schools": schools,
@@ -119,6 +120,7 @@ def flatten_records(records: list[ParsedSchoolData]) -> dict[str, list[dict]]:
         "enrolment_minority": minority,
         "enrolment_others": others,
         "enrolment_age": age,
+        "teachers": teachers,
         "facilities": facilities,
     }
 
@@ -133,6 +135,7 @@ __all__ = [
     "FacilitiesRow",
     "ParsedSchoolData",
     "SchoolRow",
+    "TeacherRow",
     "dedupe_by_udise",
     "flatten_records",
     "normalize_school",

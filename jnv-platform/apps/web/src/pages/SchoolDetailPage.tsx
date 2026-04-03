@@ -63,11 +63,11 @@ function socialCategorySlots(rows: EnrolmentCategoryChartRow[]): {
     for (const a of aliases) {
       const r = entries.get(norm(a));
       if (!r) continue;
-      if (r.total != null) return r.total;
+      const cv = r.chartValue;
+      if (typeof cv === "number" && Number.isFinite(cv) && cv > 0) return cv;
+      if (r.total != null && typeof r.total === "number" && Number.isFinite(r.total)) return r.total;
       const sum = (r.boys ?? 0) + (r.girls ?? 0);
       if (sum > 0) return sum;
-      const cv = r.chartValue;
-      if (typeof cv === "number" && cv > 0) return cv;
     }
     return null;
   };
@@ -88,6 +88,14 @@ function ChartEmpty({ title, hint }: { title: string; hint: string }) {
   );
 }
 
+function rowCategoryChartMag(r: EnrolmentCategoryChartRow): number {
+  if (typeof r.chartValue === "number" && Number.isFinite(r.chartValue)) return r.chartValue;
+  if (typeof r.total === "number" && Number.isFinite(r.total)) return r.total;
+  const b = typeof r.boys === "number" && Number.isFinite(r.boys) ? r.boys : 0;
+  const g = typeof r.girls === "number" && Number.isFinite(r.girls) ? r.girls : 0;
+  return b + g;
+}
+
 function toPieSlices(
   rows: EnrolmentCategoryChartRow[] | undefined,
   options?: { excludeTotal?: boolean },
@@ -95,40 +103,69 @@ function toPieSlices(
   const list = Array.isArray(rows) ? rows : [];
   const exTotal = options?.excludeTotal !== false;
   return list
-    .filter((r) => (r.chartValue ?? 0) > 0)
+    .filter((r) => rowCategoryChartMag(r) > 0)
     .filter((r) => !exTotal || String(r.category ?? "").trim().toLowerCase() !== "total")
     .map((r) => ({
       name: (r.category ?? "").trim() || "—",
-      value: r.chartValue ?? 0,
+      value: rowCategoryChartMag(r),
     }));
+}
+
+function rowAgeChartMag(r: EnrolmentAgeChartRow): number {
+  if (typeof r.chartValue === "number" && Number.isFinite(r.chartValue)) return r.chartValue;
+  if (typeof r.total === "number" && Number.isFinite(r.total)) return r.total;
+  const b = typeof r.boys === "number" && Number.isFinite(r.boys) ? r.boys : 0;
+  const g = typeof r.girls === "number" && Number.isFinite(r.girls) ? r.girls : 0;
+  return b + g;
 }
 
 function toAgeLinePoints(rows: EnrolmentAgeChartRow[] | undefined): { age: string; students: number }[] {
   const list = Array.isArray(rows) ? rows : [];
   return list
-    .filter((r) => (r.chartValue ?? 0) > 0)
+    .filter((r) => rowAgeChartMag(r) > 0)
     .filter((r) => String(r.ageBand ?? "").trim().toLowerCase() !== "total")
     .map((r) => ({
       age: (r.ageBand ?? "").trim() || "—",
-      students: r.chartValue ?? 0,
+      students: rowAgeChartMag(r),
     }))
     .sort((a, b) => (parseInt(a.age, 10) || 0) - (parseInt(b.age, 10) || 0));
 }
 
+function findCategoryTotalRow(rows: EnrolmentCategoryChartRow[]): EnrolmentCategoryChartRow | undefined {
+  return rows.find((r) => String(r.category ?? "").trim().toLowerCase() === "total");
+}
+
 type RevRow = { kind?: string; monthlyRevenue?: number | null; annualRevenue?: number | null };
+
+function coerceMoney(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
 
 function pickRevenueByKind(school: { revenueScenarios?: unknown }, kind: "LOW" | "MEDIUM" | "HIGH"): RevRow | undefined {
   const rows = school.revenueScenarios;
   if (!Array.isArray(rows)) return undefined;
-  return rows.find((r): r is RevRow => typeof r === "object" && r != null && (r as RevRow).kind === kind) as
-    | RevRow
-    | undefined;
+  const raw = rows.find((r): r is RevRow => {
+    if (typeof r !== "object" || r == null) return false;
+    return String((r as RevRow).kind ?? "").toUpperCase() === kind;
+  }) as RevRow | undefined;
+  if (!raw) return undefined;
+  return {
+    kind,
+    monthlyRevenue: coerceMoney(raw.monthlyRevenue),
+    annualRevenue: coerceMoney(raw.annualRevenue),
+  };
 }
 
 export function SchoolDetailPage() {
-  const { udise = "" } = useParams();
+  const { udise: udiseRaw = "" } = useParams();
+  const udise = udiseRaw.trim();
   const { setBreadcrumb } = useShellOutlet();
-  const q = useQuery({ queryKey: ["school", udise], queryFn: () => fetchSchool(udise), enabled: !!udise });
+  const q = useQuery({ queryKey: ["school", udise], queryFn: () => fetchSchool(udise), enabled: udise.length > 0 });
   const [nextPipeline, setNextPipeline] = useState("NOT_REVIEWED");
 
   useEffect(() => {
@@ -150,8 +187,29 @@ export function SchoolDetailPage() {
     onSuccess: () => q.refetch(),
   });
 
+  const pdfPathForProbe = q.data?.pdfPath;
+  const pdfProbeEnabled = udise.length === 11 && !!pdfPathForProbe?.trim() && q.isSuccess;
+  const pdfProbe = useQuery({
+    queryKey: ["school-pdf", udise],
+    queryFn: async () => {
+      const res = await fetch(`/api/schools/${udise}/pdf`, { method: "HEAD", credentials: "include" });
+      return res.ok;
+    },
+    enabled: pdfProbeEnabled,
+    staleTime: 120_000,
+  });
+
   if (q.isError) {
-    return <div className="rounded-lg border border-danger/40 bg-danger/15 p-4 text-sm text-red-200">Could not load school.</div>;
+    const msg = q.error instanceof Error ? q.error.message : String(q.error ?? "");
+    return (
+      <div className="rounded-lg border border-danger/40 bg-danger/15 p-4 text-sm text-ink">
+        <p className="font-medium text-danger">Could not load this school.</p>
+        <p className="mt-2 text-muted">
+          {msg || "Unknown error."} Is the API running on port 4000? From <code className="rounded bg-canvas px-1">jnv-platform</code> run{" "}
+          <code className="rounded bg-canvas px-1">npm run dev</code> (starts API + web together).
+        </p>
+      </div>
+    );
   }
 
   if (q.isPending) {
@@ -187,15 +245,54 @@ export function SchoolDetailPage() {
   const mediumRev = pickRevenueByKind(s, "MEDIUM");
   const highRev = pickRevenueByKind(s, "HIGH");
   const slots = socialCategorySlots(enrolmentSocial);
-  const hasSocialData = slots.some((x) => x.value != null && x.value > 0);
-  const socialPieData = slots
-    .filter((x) => x.value != null && x.value > 0)
-    .map((x) => ({ name: x.label, value: x.value as number }));
+  const socialTotalRow = findCategoryTotalRow(enrolmentSocial);
+  const socialTotalMag = socialTotalRow ? rowCategoryChartMag(socialTotalRow) : 0;
+  const hasSlotSocial = slots.some((x) => x.value != null && x.value > 0);
+  /** Bulk Excel / snapshots often store only a "Total" row for social — still show one chart slice. */
+  const hasSocialData = hasSlotSocial || socialTotalMag > 0;
+  const socialPieData = hasSlotSocial
+    ? slots
+        .filter((x) => x.value != null && x.value > 0)
+        .map((x) => ({ name: x.label, value: x.value as number }))
+    : socialTotalMag > 0
+      ? [{ name: "Enrolment (reported total)", value: socialTotalMag }]
+      : [];
   const socialBarData = socialPieData.map((d) => ({ name: d.name, students: d.value }));
 
-  const minorityPie = toPieSlices(enrolmentMinority, { excludeTotal: true });
-  const othersBar = toPieSlices(enrolmentOthers, { excludeTotal: true });
+  const minorityPieRaw = toPieSlices(enrolmentMinority, { excludeTotal: true });
+  const minorityTotalRow = findCategoryTotalRow(enrolmentMinority);
+  const minorityTotalMag = minorityTotalRow ? rowCategoryChartMag(minorityTotalRow) : 0;
+  const minorityPie =
+    minorityPieRaw.length > 0
+      ? minorityPieRaw
+      : minorityTotalMag > 0
+        ? [{ name: "Minority (reported total)", value: minorityTotalMag }]
+        : [];
+
+  const othersBarRaw = toPieSlices(enrolmentOthers, { excludeTotal: true });
+  const othersTotalRow = findCategoryTotalRow(enrolmentOthers);
+  const othersTotalMag = othersTotalRow ? rowCategoryChartMag(othersTotalRow) : 0;
+  const othersBar =
+    othersBarRaw.length > 0
+      ? othersBarRaw
+      : othersTotalMag > 0
+        ? [{ name: "Other categories (total)", value: othersTotalMag }]
+        : [];
+
   const ageLine = toAgeLinePoints(enrolmentAge);
+  const ageTotalRow = enrolmentAge.find((r) => String(r.ageBand ?? "").trim().toLowerCase() === "total");
+  const ageTotalMag = ageTotalRow ? rowAgeChartMag(ageTotalRow) : 0;
+  const headcountTotal = s.enrolmentHeadcount?.totalStudents;
+  const ageFallbackTotal =
+    ageLine.length === 0
+      ? typeof headcountTotal === "number" && headcountTotal > 0
+        ? headcountTotal
+        : ageTotalMag > 0
+          ? ageTotalMag
+          : null
+      : null;
+
+  const pdfPathPresent = udise.length === 11 && !!pdfPath?.trim();
 
   const fetching = q.isFetching ? "opacity-[0.92]" : "";
   const infraStatus = [
@@ -217,6 +314,7 @@ export function SchoolDetailPage() {
     { label: "Laptops", count: s.sections?.digital?.laptops ?? 0 },
     { label: "Tablets", count: s.sections?.digital?.tablets ?? 0 },
     { label: "Printers", count: s.sections?.digital?.printers ?? 0 },
+    { label: "Projectors", count: s.sections?.digital?.projectors ?? 0 },
   ];
   const digitalFunctional = digitalRows.filter((d) => d.count > 0).length;
   const digitalTotalUnits = digitalRows.reduce((a, d) => a + d.count, 0);
@@ -264,7 +362,7 @@ export function SchoolDetailPage() {
           <MetricCard label="Infra score" value={`${infraAvailable}/${infraStatus.length}`} />
         </motion.div>
         {s.provenance?.importLastError ? (
-          <p className="mt-4 text-xs text-amber-800">Import error: {s.provenance.importLastError}</p>
+          <p className="mt-4 text-xs text-amber-800">Data load note: {s.provenance.importLastError}</p>
         ) : null}
       </header>
 
@@ -278,7 +376,7 @@ export function SchoolDetailPage() {
           {!hasSocialData ? (
             <ChartEmpty
               title="No social-category data"
-              hint="Import a report card PDF or confirm enrolment rows exist for this school."
+              hint="Re-run the master Excel import for this UDISE or check the enrolment_social sheet has rows."
             />
           ) : (
             <div className="grid gap-4 md:grid-cols-2">
@@ -333,7 +431,7 @@ export function SchoolDetailPage() {
         <ChartCard title="Minority" subtitle="Composition (Total excluded)">
           <div className="h-[260px]">
             {minorityPie.length === 0 ? (
-              <ChartEmpty title="No minority breakdown" hint="Data appears after import writes minority rows." />
+              <ChartEmpty title="No minority breakdown" hint="Add rows for this school in the enrolment_minority sheet, then re-import." />
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
@@ -367,8 +465,18 @@ export function SchoolDetailPage() {
 
         <ChartCard title="Age distribution" subtitle="By age band">
           <div className="h-[260px]">
-            {ageLine.length === 0 ? (
-              <ChartEmpty title="No age-band data" hint="Import must populate SchoolEnrolmentAge." />
+            {ageLine.length === 0 && ageFallbackTotal == null ? (
+              <ChartEmpty title="No age-band data" hint="Populate the enrolment_age sheet for this UDISE, then re-import." />
+            ) : ageLine.length === 0 && ageFallbackTotal != null ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 rounded-lg border border-line bg-surface-3 px-4 text-center">
+                <p className="text-sm font-medium text-ink">No per-age breakdown on file</p>
+                <p className="text-2xl font-semibold tabular-nums text-accent">{ageFallbackTotal.toLocaleString("en-IN")}</p>
+                <p className="max-w-sm text-xs text-muted">
+                  Total students from the school record
+                  {ageTotalMag > 0 ? " (matches the age Total row in the import)" : ""}. Add age-band rows in the master
+                  import to restore the line chart.
+                </p>
+              </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={ageLine} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
@@ -399,7 +507,7 @@ export function SchoolDetailPage() {
         <ChartCard title="Other categories" subtitle="CWSN, EWS, etc.">
           <div className="h-[260px]">
             {othersBar.length === 0 ? (
-              <ChartEmpty title="No other-category rows" hint="Import must populate SchoolEnrolmentOthers." />
+              <ChartEmpty title="No other-category rows" hint="Populate the enrolment_others sheet for this UDISE, then re-import." />
             ) : (
               <div className="flex h-full flex-col">
                 <div className="min-h-0 flex-1">
@@ -520,6 +628,29 @@ export function SchoolDetailPage() {
             </ResponsiveContainer>
           </div>
         </ChartCard>
+
+        <ChartCard title="Teachers" subtitle="Academic roles and Gender breakdown">
+          {s.chartSeries.teachers?.length === 0 ? (
+             <ChartEmpty title="No teacher breakdown" hint="Extraction did not find teacher detail rows." />
+          ) : (
+            <div className="h-[290px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={s.chartSeries.teachers.filter(t => t.category === "Academic" || t.category === "Gender")} margin={{ top: 12, right: 8, left: 0, bottom: 48 }}>
+                   <CartesianGrid stroke="#E2E8F0" />
+                   <XAxis dataKey="label" {...CHART_AXIS} interval={0} angle={-28} textAnchor="end" height={48} tick={{ fill: "#64748B", fontSize: 10 }} />
+                   <YAxis {...CHART_AXIS} allowDecimals={false} width={32} />
+                   <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number | string) => [v ?? 0, "Teachers"]} />
+                   <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                      {s.chartSeries.teachers.map((d, i) => (
+                        <Cell key={i} fill={d.category === "Gender" ? (d.label === "Female" ? "#EC4899" : "#2563EB") : PALETTE[i % PALETTE.length]} />
+                      ))}
+                   </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </ChartCard>
+
       </motion.div>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -603,7 +734,7 @@ export function SchoolDetailPage() {
         </section>
       </div>
 
-      {udise.length === 11 && pdfPath ? (
+      {pdfPathPresent ? (
         <section className="premium-panel rounded-xl p-5 premium-ring">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-ink">Report card PDF</h2>
@@ -616,13 +747,25 @@ export function SchoolDetailPage() {
               Open in new tab
             </a>
           </div>
-          <div className="mt-4 overflow-hidden rounded-lg border border-line bg-surface-3">
-            <iframe
-              title="School PDF"
-              src={`/api/schools/${udise}/pdf`}
-              className="h-[min(70vh,640px)] w-full"
-            />
-          </div>
+          {pdfProbe.isFetching ? (
+            <p className="mt-3 text-xs text-muted">Checking whether the PDF is available on this server…</p>
+          ) : null}
+          {pdfProbe.isSuccess && pdfProbe.data === false ? (
+            <p className="mt-3 rounded-md border border-amber-200/60 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
+              A PDF path is stored for this school, but the file was not found under the API&apos;s data root (common in dev
+              when PDFs are not on disk). Use &quot;Open in new tab&quot; if you have since added the file, or ignore this
+              section for Excel-only data.
+            </p>
+          ) : null}
+          {pdfProbe.isSuccess && pdfProbe.data ? (
+            <div className="mt-4 overflow-hidden rounded-lg border border-line bg-surface-3">
+              <iframe
+                title="School PDF"
+                src={`/api/schools/${udise}/pdf`}
+                className="h-[min(70vh,640px)] w-full"
+              />
+            </div>
+          ) : null}
         </section>
       ) : null}
 

@@ -57,6 +57,22 @@ class CategoryRow:
 
 
 @dataclass(slots=True)
+class TeacherRow:
+    udise: str
+    category: str
+    label: str
+    count: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "udise": self.udise,
+            "category": self.category,
+            "label": self.label,
+            "count": self.count,
+        }
+
+
+@dataclass(slots=True)
 class AgeRow:
     udise: str
     age_band: str
@@ -123,6 +139,7 @@ class ParsedSchoolData:
     minority: list[CategoryRow] = field(default_factory=list)
     others: list[CategoryRow] = field(default_factory=list)
     age: list[AgeRow] = field(default_factory=list)
+    teachers: list[TeacherRow] = field(default_factory=list)
     facilities: FacilitiesRow | None = None
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)

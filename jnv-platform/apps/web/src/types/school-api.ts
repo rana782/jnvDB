@@ -116,6 +116,7 @@ export type SchoolCanonical = {
       desktops?: number | null;
       tablets?: number | null;
       printers?: number | null;
+      projectors?: number | null;
     } | null;
     teachers?: { category?: string | null; label?: string | null; count?: number | null }[] | null;
     enrolmentSocial?: unknown[] | null;
@@ -151,6 +152,7 @@ export type SchoolDigitalCompare = {
   desktops?: number | null;
   tablets?: number | null;
   printers?: number | null;
+  projectors?: number | null;
 } | null;
 
 export type SchoolRevenueScenarioCompare = {

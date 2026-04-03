@@ -1,6 +1,9 @@
 __pycache__/
 *.py[cod]
-output/
+# Track master bulk workbook for reproducible DB loads; ignore other output noise
+output/*
+!output/.gitkeep
+!output/JNV_bulk_import_ready_MASTER.xlsx
 pilot_output/
 pilot_state/
 state/

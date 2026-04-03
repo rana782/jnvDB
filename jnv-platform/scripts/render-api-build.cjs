@@ -23,4 +23,7 @@ function run(cmd, opts = {}) {
 run("npm ci --include=dev");
 run("npm run db:generate -w @jnv/api");
 run("npm run build -w @jnv/api");
-run("npx prisma db push --skip-generate", { cwd: path.join(root, "apps", "api") });
+const apiDir = path.join(root, "apps", "api");
+run("npx prisma db push --skip-generate", { cwd: apiDir });
+// States, roles, founder login — idempotent. School rows come from Excel import (see jnv_pipeline).
+run("npx prisma db seed", { cwd: apiDir });

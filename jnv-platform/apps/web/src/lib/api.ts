@@ -1,5 +1,12 @@
 const base = import.meta.env.VITE_API_BASE_URL ?? "";
 
+if (!base && import.meta.env.PROD) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[jnv-web] VITE_API_BASE_URL is empty in production; API calls will go to relative paths. Set VITE_API_BASE_URL to your Render API origin.",
+  );
+}
+
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${base}${path}`, {
     ...init,

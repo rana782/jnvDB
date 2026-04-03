@@ -147,7 +147,15 @@ export type SchoolCanonicalDto = {
   };
   sections: {
     infra: SchoolDetailRow["infra"];
-    digital: SchoolDetailRow["digital"];
+    /** Flattened from `SchoolDigitalFacilities`; `projectors` read from `extra.projectors` when present. */
+    digital: {
+      smartClassTv: number | null;
+      laptops: number | null;
+      desktops: number | null;
+      tablets: number | null;
+      printers: number | null;
+      projectors: number | null;
+    } | null;
     teachers: SchoolDetailRow["teachers"];
     enrolmentSocial: SchoolDetailRow["enrolmentSocial"];
     enrolmentMinority: SchoolDetailRow["enrolmentMinority"];
@@ -237,6 +245,185 @@ function toAgeChartRows(
   });
 }
 
+/** `payload` from SchoolReportCardSnapshot (crawler / PDF import). */
+function structuredFromSnapshotPayload(payload: unknown): Record<string, unknown> | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const p = payload as Record<string, unknown>;
+  const st = p.structured;
+  if (st && typeof st === "object" && !Array.isArray(st)) return st as Record<string, unknown>;
+  return null;
+}
+
+function coerceFiniteInt(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return Math.trunc(v);
+  if (typeof v === "string") {
+    const t = v.replace(/,/g, "").trim();
+    if (!t) return null;
+    const n = parseInt(t, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function mergeBool(db: boolean | null | undefined, snap: unknown): boolean | null {
+  if (db === true || db === false) return db;
+  if (snap === true) return true;
+  if (snap === false) return false;
+  return db ?? null;
+}
+
+function infraRecord(st: Record<string, unknown> | null): Record<string, unknown> | null {
+  const i = st?.infra;
+  return i && typeof i === "object" && !Array.isArray(i) ? (i as Record<string, unknown>) : null;
+}
+
+type SlimCat = { category: string; boys: number | null; girls: number | null; total: number | null };
+
+function nonTotalPositiveCategoryCount(rows: SlimCat[]): number {
+  let n = 0;
+  for (const r of rows) {
+    if (String(r.category ?? "").trim().toLowerCase() === "total") continue;
+    if (chartValueFromRow(r.total, r.boys, r.girls) > 0) n++;
+  }
+  return n;
+}
+
+function categoryRowsFromSocialBlock(block: unknown): SlimCat[] {
+  if (!block || typeof block !== "object") return [];
+  const b = block as Record<string, unknown>;
+  const pairs: [string, string][] = [
+    ["sc", "SC"],
+    ["st", "ST"],
+    ["obc", "OBC"],
+    ["general", "General"],
+    ["total", "Total"],
+  ];
+  const out: SlimCat[] = [];
+  for (const [key, label] of pairs) {
+    const n = coerceFiniteInt(b[key]);
+    if (n != null) out.push({ category: label, boys: null, girls: null, total: n });
+  }
+  return out;
+}
+
+function categoryRowsFromMinorityBlock(block: unknown): SlimCat[] {
+  if (!block || typeof block !== "object") return [];
+  const b = block as Record<string, unknown>;
+  const pairs: [string, string][] = [
+    ["muslim", "Muslim"],
+    ["christian", "Christian"],
+    ["sikh", "Sikh"],
+    ["buddhist", "Buddhist"],
+    ["jain", "Jain"],
+    ["others", "Other"],
+    ["total", "Total"],
+  ];
+  const out: SlimCat[] = [];
+  for (const [key, label] of pairs) {
+    const n = coerceFiniteInt(b[key]);
+    if (n != null) out.push({ category: label, boys: null, girls: null, total: n });
+  }
+  return out;
+}
+
+function categoryRowsFromOthersBlock(block: unknown): SlimCat[] {
+  if (!block || typeof block !== "object") return [];
+  const b = block as Record<string, unknown>;
+  const pairs: [string, string][] = [
+    ["cwsn", "CWSN"],
+    ["ews", "EWS"],
+    ["bpl", "BPL"],
+    ["repeater", "Repeater"],
+    ["otherCategories", "Other categories"],
+    ["total", "Total"],
+  ];
+  const out: SlimCat[] = [];
+  for (const [key, label] of pairs) {
+    const n = coerceFiniteInt(b[key]);
+    if (n != null) out.push({ category: label, boys: null, girls: null, total: n });
+  }
+  return out;
+}
+
+type SlimAge = { ageBand: string; boys: number | null; girls: number | null; total: number | null };
+
+function ageHasBandDetail(rows: SlimAge[]): boolean {
+  for (const r of rows) {
+    const band = String(r.ageBand ?? "").trim();
+    if (band.toLowerCase() === "total") continue;
+    if (/^\d{1,2}$/.test(band) && chartValueFromRow(r.total, r.boys, r.girls) > 0) return true;
+  }
+  return false;
+}
+
+function ageRowsFromStructuredBlock(block: unknown): SlimAge[] {
+  if (!block || typeof block !== "object") return [];
+  const b = block as Record<string, unknown>;
+  const out: SlimAge[] = [];
+  for (const [k, v] of Object.entries(b)) {
+    if (!k.startsWith("age_")) continue;
+    const suffix = k.slice(4);
+    const n = coerceFiniteInt(v);
+    if (n != null) out.push({ ageBand: suffix, boys: null, girls: null, total: n });
+  }
+  const tot = coerceFiniteInt(b.total);
+  if (tot != null) out.push({ ageBand: "Total", boys: null, girls: null, total: tot });
+  return out;
+}
+
+function mergeSocialForCharts(db: SchoolDetailRow["enrolmentSocial"], payload: unknown): SlimCat[] {
+  const slim: SlimCat[] = db.map((r) => ({
+    category: r.category,
+    boys: r.boys ?? null,
+    girls: r.girls ?? null,
+    total: r.total ?? null,
+  }));
+  if (nonTotalPositiveCategoryCount(slim) >= 1) return slim;
+  const st = structuredFromSnapshotPayload(payload);
+  const syn = categoryRowsFromSocialBlock(st?.enrolmentSocial);
+  return syn.length > 0 ? syn : slim;
+}
+
+function mergeMinorityForCharts(db: SchoolDetailRow["enrolmentMinority"], payload: unknown): SlimCat[] {
+  const slim: SlimCat[] = db.map((r) => ({
+    category: r.category,
+    boys: r.boys ?? null,
+    girls: r.girls ?? null,
+    total: r.total ?? null,
+  }));
+  if (nonTotalPositiveCategoryCount(slim) >= 1) return slim;
+  const st = structuredFromSnapshotPayload(payload);
+  const syn = categoryRowsFromMinorityBlock(st?.enrolmentMinority);
+  return syn.length > 0 ? syn : slim;
+}
+
+function mergeOthersForCharts(db: SchoolDetailRow["enrolmentOthers"], payload: unknown): SlimCat[] {
+  const slim: SlimCat[] = db.map((r) => ({
+    category: r.category,
+    boys: r.boys ?? null,
+    girls: r.girls ?? null,
+    total: r.total ?? null,
+  }));
+  if (nonTotalPositiveCategoryCount(slim) >= 1) return slim;
+  const st = structuredFromSnapshotPayload(payload);
+  const syn = categoryRowsFromOthersBlock(st?.enrolmentOthers);
+  return syn.length > 0 ? syn : slim;
+}
+
+function mergeAgeForCharts(db: SchoolDetailRow["enrolmentAge"], payload: unknown): SlimAge[] {
+  const slim: SlimAge[] = db.map((r) => ({
+    ageBand: r.ageBand,
+    boys: r.boys ?? null,
+    girls: r.girls ?? null,
+    total: r.total ?? null,
+  }));
+  if (ageHasBandDetail(slim)) return slim;
+  const st = structuredFromSnapshotPayload(payload);
+  const syn = ageRowsFromStructuredBlock(st?.enrolmentAge);
+  return syn.length > 0 ? syn : slim;
+}
+
 /**
  * `school` mirrors canonical detail but omits enrolment breakdowns provided at the top level.
  */
@@ -283,6 +470,58 @@ const REGION_NAME_RE =
 
 function normSpaces(v: string | null | undefined): string {
   return (v ?? "").replace(/\s+/g, " ").trim();
+}
+
+function projectorsFromDigitalExtra(extra: unknown): number | null {
+  if (!extra || typeof extra !== "object" || Array.isArray(extra)) return null;
+  const p = (extra as Record<string, unknown>).projectors;
+  if (typeof p === "number" && Number.isFinite(p)) return p;
+  if (typeof p === "string") {
+    const n = parseInt(p, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function pickDigitalCount(
+  d: SchoolDetailRow["digital"] | null,
+  block: Record<string, unknown> | null,
+  rowKey: "smartClassTv" | "laptops" | "desktops" | "tablets" | "printers",
+  structKey: string,
+): number | null {
+  const rv = d?.[rowKey];
+  if (rv != null && typeof rv === "number" && Number.isFinite(rv)) return rv;
+  const n = coerceFiniteInt(block?.[structKey]);
+  if (n != null) return n;
+  return null;
+}
+
+/** API-facing digital block (no raw `extra`); fills from snapshot `structured.digital` when columns are null. */
+export function digitalSectionForApi(
+  d: SchoolDetailRow["digital"],
+  structuredDigital?: unknown,
+): SchoolCanonicalDto["sections"]["digital"] {
+  const block =
+    structuredDigital && typeof structuredDigital === "object" && !Array.isArray(structuredDigital)
+      ? (structuredDigital as Record<string, unknown>)
+      : null;
+  const smartClassTv = pickDigitalCount(d, block, "smartClassTv", "smartClassTv");
+  const laptops = pickDigitalCount(d, block, "laptops", "laptops");
+  const desktops = pickDigitalCount(d, block, "desktops", "desktops");
+  const tablets = pickDigitalCount(d, block, "tablets", "tablets");
+  const printers = pickDigitalCount(d, block, "printers", "printers");
+  const projectors =
+    projectorsFromDigitalExtra(d?.extra ?? null) ?? coerceFiniteInt(block?.projectors) ?? null;
+  const nums = [smartClassTv, laptops, desktops, tablets, printers, projectors];
+  if (!d && !block && nums.every((x) => x == null)) return null;
+  return {
+    smartClassTv,
+    laptops,
+    desktops,
+    tablets,
+    printers,
+    projectors,
+  };
 }
 
 function districtFromSchoolName(name: string | null | undefined): string | null {
@@ -384,10 +623,14 @@ export function toSchoolListItem(s: SchoolListRow): SchoolListItemDto {
 
 export function toSchoolCanonical(s: SchoolDetailRow): SchoolCanonicalDto {
   const snap = s.reportCardSnapshot;
+  const structured = structuredFromSnapshotPayload(snap?.payload);
+  const infra = infraRecord(structured);
+  const cleanedDistrict = sanitizeDistrict(s.geographicDistrict, s.district?.name ?? null, s.schoolName);
+  const cleanedSchoolName = sanitizeSchoolName(s.schoolName, cleanedDistrict);
   return {
     udise: s.udise,
     profile: {
-      schoolName: s.schoolName,
+      schoolName: cleanedSchoolName,
       managementName: s.managementName ?? null,
       categoryName: s.categoryName ?? null,
       schoolType: s.schoolType ?? null,
@@ -401,8 +644,13 @@ export function toSchoolCanonical(s: SchoolDetailRow): SchoolCanonicalDto {
     },
     location: {
       apiStateName: s.apiStateName ?? null,
-      geographicState: s.geographicState ?? null,
-      geographicDistrict: s.geographicDistrict ?? null,
+      /** Match list view: bulk Excel often leaves geographicState empty but stateId + State row exist. */
+      geographicState:
+        normSpaces(s.geographicState) ||
+        normSpaces(s.state?.name) ||
+        normSpaces(s.apiStateName) ||
+        null,
+      geographicDistrict: cleanedDistrict,
       blockName: s.blockName ?? null,
       villageName: s.villageName ?? null,
       clusterName: s.clusterName ?? null,
@@ -419,24 +667,24 @@ export function toSchoolCanonical(s: SchoolDetailRow): SchoolCanonicalDto {
       totalTeachers: s.totalTeachers ?? null,
     },
     facilities: {
-      waterAvailable: s.waterAvailable ?? null,
-      electricityAvailable: s.electricityAvailable ?? null,
-      internetAvailable: s.internetAvailable ?? null,
-      solarAvailable: s.solarAvailable ?? null,
-      playgroundAvailable: s.playgroundAvailable ?? null,
-      libraryAvailable: s.libraryAvailable ?? null,
+      waterAvailable: mergeBool(s.waterAvailable, infra?.water),
+      electricityAvailable: mergeBool(s.electricityAvailable, infra?.electricity),
+      internetAvailable: mergeBool(s.internetAvailable, infra?.internet),
+      solarAvailable: mergeBool(s.solarAvailable, infra?.solar),
+      playgroundAvailable: mergeBool(s.playgroundAvailable, infra?.playground),
+      libraryAvailable: mergeBool(s.libraryAvailable, infra?.library),
     },
     contact: { hmEmail: s.hmEmail ?? null, hmMobile: s.hmMobile ?? null },
     provenance: {
       ...baseProvenance(s),
-      extractorVersion: s.extractorVersion,
+      extractorVersion: s.extractorVersion ?? "1.0.0",
       reportSnapshot: snap
         ? { extractedAt: snap.extractedAt.toISOString(), payload: snap.payload }
         : null,
     },
     sections: {
       infra: s.infra,
-      digital: s.digital,
+      digital: digitalSectionForApi(s.digital, structured?.digital),
       teachers: s.teachers,
       enrolmentSocial: s.enrolmentSocial,
       enrolmentMinority: s.enrolmentMinority,
@@ -496,12 +744,13 @@ export function toSchoolDetailApiResponse(s: SchoolDetailRow): SchoolDetailApiRe
     digital: canonical.sections.digital,
     teachers: canonical.sections.teachers,
   };
+  const snapPayload = s.reportCardSnapshot?.payload;
   return {
     school: { ...canonical, sections, chartSeries },
-    enrolmentSocial: toCategoryChartRows(s.enrolmentSocial),
-    enrolmentMinority: toCategoryChartRows(s.enrolmentMinority),
-    enrolmentOthers: toCategoryChartRows(s.enrolmentOthers),
-    enrolmentAge: toAgeChartRows(s.enrolmentAge),
+    enrolmentSocial: toCategoryChartRows(mergeSocialForCharts(s.enrolmentSocial, snapPayload)),
+    enrolmentMinority: toCategoryChartRows(mergeMinorityForCharts(s.enrolmentMinority, snapPayload)),
+    enrolmentOthers: toCategoryChartRows(mergeOthersForCharts(s.enrolmentOthers, snapPayload)),
+    enrolmentAge: toAgeChartRows(mergeAgeForCharts(s.enrolmentAge, snapPayload)),
     extractionConfidence: s.overallExtractionConfidence ?? null,
     pdfPath: s.pdfRelativePath ?? null,
   };

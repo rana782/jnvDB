@@ -2,9 +2,9 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Local dev: SQLite file (no Postgres password). For production PostgreSQL, see docs/DATABASE_PROVIDERS.md
+// PostgreSQL only (local or Supabase). See apps/api/.env.example and docs/DATABASE_PROVIDERS.md.
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 

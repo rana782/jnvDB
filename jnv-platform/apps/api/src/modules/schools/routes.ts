@@ -19,6 +19,7 @@ import {
   upsertNote,
 } from "./schools.service.js";
 import { getPrisma } from "../../shared/prisma.js";
+import { normalizeUdise } from "../../shared/udise.js";
 import { AppError } from "../../shared/errors.js";
 import { pipelineStatusSchema } from "../../shared/pipeline-status.js";
 
@@ -92,6 +93,80 @@ export const registerSchoolRoutes: FastifyPluginAsync = async (app) => {
     return getSchoolDetailApi(udise);
   });
 
+  app.get("/schools/:udise/facilities", async (request) => {
+    const { udise } = request.params as { udise: string };
+    const s = await getSchoolDetailRow(udise);
+    const projectors =
+      s.digital && s.digital.extra && typeof s.digital.extra === "object" && "projectors" in s.digital.extra
+        ? Number((s.digital.extra as { projectors?: unknown }).projectors ?? null)
+        : null;
+    return {
+      udise: s.udise,
+      water_available: s.waterAvailable ?? null,
+      electricity_available: s.electricityAvailable ?? null,
+      internet_available: s.internetAvailable ?? null,
+      solar_available: s.solarAvailable ?? null,
+      playground_available: s.playgroundAvailable ?? null,
+      library_available: s.libraryAvailable ?? null,
+      functional_toilets_b: s.infra?.functionalToiletsB ?? null,
+      functional_toilets_g: s.infra?.functionalToiletsG ?? null,
+      desktops: s.digital?.desktops ?? null,
+      laptops: s.digital?.laptops ?? null,
+      tablets: s.digital?.tablets ?? null,
+      printers: s.digital?.printers ?? null,
+      smart_class_tv: s.digital?.smartClassTv ?? null,
+      projectors: Number.isFinite(projectors) ? projectors : null,
+    };
+  });
+
+  app.get("/schools/:udise/enrolment/social", async (request) => {
+    const { udise } = request.params as { udise: string };
+    const s = await getSchoolDetailRow(udise);
+    return s.enrolmentSocial.map((r) => ({
+      udise: s.udise,
+      category: r.category,
+      boys: r.boys,
+      girls: r.girls,
+      total: r.total,
+    }));
+  });
+
+  app.get("/schools/:udise/enrolment/minority", async (request) => {
+    const { udise } = request.params as { udise: string };
+    const s = await getSchoolDetailRow(udise);
+    return s.enrolmentMinority.map((r) => ({
+      udise: s.udise,
+      category: r.category,
+      boys: r.boys,
+      girls: r.girls,
+      total: r.total,
+    }));
+  });
+
+  app.get("/schools/:udise/enrolment/others", async (request) => {
+    const { udise } = request.params as { udise: string };
+    const s = await getSchoolDetailRow(udise);
+    return s.enrolmentOthers.map((r) => ({
+      udise: s.udise,
+      category: r.category,
+      boys: r.boys,
+      girls: r.girls,
+      total: r.total,
+    }));
+  });
+
+  app.get("/schools/:udise/enrolment/age", async (request) => {
+    const { udise } = request.params as { udise: string };
+    const s = await getSchoolDetailRow(udise);
+    return s.enrolmentAge.map((r) => ({
+      udise: s.udise,
+      age_band: r.ageBand,
+      boys: r.boys,
+      girls: r.girls,
+      total: r.total,
+    }));
+  });
+
   app.get("/schools/:udise/charts", async (request) => {
     const { udise } = request.params as { udise: string };
     const canonical = await getSchoolCanonical(udise);
@@ -99,6 +174,26 @@ export const registerSchoolRoutes: FastifyPluginAsync = async (app) => {
       chartSeries: canonical.chartSeries,
       sections: canonical.sections,
     };
+  });
+
+  /** Lets the SPA probe before embedding (avoids broken iframes when the file is missing on disk). */
+  app.head("/schools/:udise/pdf", async (request, reply) => {
+    const { udise } = request.params as { udise: string };
+    const prisma = getPrisma();
+    const row = await prisma.school.findUnique({
+      where: { udise: normalizeUdise(udise) },
+      select: { pdfRelativePath: true },
+    });
+    if (!row?.pdfRelativePath?.trim()) return reply.code(404).send();
+    let paths;
+    try {
+      paths = resolveScrapedDataPaths(env);
+    } catch {
+      return reply.code(404).send();
+    }
+    const abs = resolveExistingPdfAbsolute(paths.repoRoot, row.pdfRelativePath);
+    if (!abs) return reply.code(404).send();
+    return reply.code(204).send();
   });
 
   app.get("/schools/:udise/pdf", async (request, reply) => {

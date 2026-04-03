@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 try:
@@ -9,16 +10,16 @@ except Exception:  # pragma: no cover
     tqdm = None
 
 from .config import PipelineConfig
-from .excel_writer import SHEET_HEADERS, write_workbook
+from .json_output import build_json_record, validate_json_record, dumps_pretty
 from .manifest import load_manifest, mark_failure, mark_success, save_manifest
-from .normalize import dedupe_by_udise, flatten_records, normalize_school
+from .normalize import dedupe_by_udise, normalize_school
 from .parse_pdf import parse_pdf_file
 from .utils import append_jsonl
-from .validate import validate_record, validate_sheet_headers
+from .validate import validate_record
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="JNV PDF to Excel ETL pipeline")
+    p = argparse.ArgumentParser(description="JNV PDF to JSON ETL pipeline")
     p.add_argument("--input-dir", type=Path, required=True)
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--manifest", type=Path, default=Path("jnv_pipeline_state/manifest.json"))
@@ -45,8 +46,16 @@ def run(config: PipelineConfig, force_ocr: bool = False) -> int:
     if config.demo_pdf:
         rec = parse_pdf_file(config.demo_pdf, force_ocr=force_ocr)
         rec = normalize_school(rec)
-        print(rec.school.as_dict())
-        print("social_rows=", len(rec.social), "minority_rows=", len(rec.minority), "age_rows=", len(rec.age))
+        errs = validate_record(rec)
+        if errs:
+            rec.errors.extend(errs)
+        obj = build_json_record(rec)
+        schema_errors = validate_json_record(obj)
+        if schema_errors:
+            print("Schema validation errors for demo PDF:")
+            for e in schema_errors:
+                print("-", e)
+        print(dumps_pretty(obj))
         return 0
 
     if not pending:
@@ -57,6 +66,8 @@ def run(config: PipelineConfig, force_ocr: bool = False) -> int:
     batch_no = int(manifest.get("last_batch", 0)) + 1
     parsed_records = []
     iterator = tqdm(batch, desc=f"Batch {batch_no}") if tqdm else batch
+
+    batch_jsonl_path = config.output_dir / "batch.jsonl"
 
     for pdf in iterator:
         log = {"pdf": pdf.name, "path": str(pdf), "status": "ok", "warnings": [], "errors": []}
@@ -73,12 +84,24 @@ def run(config: PipelineConfig, force_ocr: bool = False) -> int:
             else:
                 if rec.errors:
                     rec.school.notes = _append_note(rec.school.notes, "validation issues: " + " | ".join(rec.errors))
-                parsed_records.append(rec)
-                mark_success(manifest, pdf.name)
-                log["warnings"] = rec.warnings
-                log["errors"] = rec.errors
-                log["parse_confidence"] = rec.school.parse_confidence
-                log["udise"] = rec.school.udise
+
+                obj = build_json_record(rec)
+                schema_errors = validate_json_record(obj)
+                if schema_errors:
+                    all_errs = rec.errors + schema_errors
+                    log["status"] = "failed_schema"
+                    log["errors"] = all_errs
+                    mark_failure(manifest, pdf.name)
+                else:
+                    out_json = config.output_dir / f"{pdf.stem}.json"
+                    out_json.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+
+                    parsed_records.append(rec)
+                    mark_success(manifest, pdf.name)
+                    log["warnings"] = rec.warnings
+                    log["errors"] = rec.errors
+                    log["parse_confidence"] = rec.school.parse_confidence
+                    log["udise"] = rec.school.udise
         except Exception as exc:  # continue processing next PDF
             mark_failure(manifest, pdf.name)
             log["status"] = "failed"
@@ -86,18 +109,18 @@ def run(config: PipelineConfig, force_ocr: bool = False) -> int:
         append_jsonl(config.log_path, log)
 
     unique_records = dedupe_by_udise(parsed_records)
-    sheets = flatten_records(unique_records)
-    header_errors = validate_sheet_headers(sheets, SHEET_HEADERS)
-    if header_errors:
-        raise RuntimeError("Workbook header validation failed: " + "; ".join(header_errors))
 
-    out_name = f"JNV_bulk_import_ready_batch_{batch_no:02d}.xlsx"
-    out_path = config.output_dir / out_name
-    write_workbook(sheets, out_path)
+    if unique_records:
+        with batch_jsonl_path.open("a", encoding="utf-8") as f:
+            for rec in unique_records:
+                obj = build_json_record(rec)
+                f.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
     manifest["last_batch"] = batch_no
     save_manifest(config.manifest_path, manifest)
-    print(f"Batch {batch_no} complete. Workbook: {out_path}")
+    print(f"Batch {batch_no} complete.")
+    print(f"Wrote per-PDF JSON files to: {config.output_dir}")
+    print(f"Appended {len(unique_records)} records to JSONL: {batch_jsonl_path}")
     print(f"Processed rows: {len(unique_records)} (from {len(batch)} PDFs)")
     return 0
 

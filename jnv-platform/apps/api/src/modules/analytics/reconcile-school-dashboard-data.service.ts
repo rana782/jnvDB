@@ -5,6 +5,7 @@
  * Use after bulk import when many rows have null totalStudents / geographicState but snapshot or
  * `apiStateName` / social "Total" can supply values — fixes dashboard + map KPIs.
  */
+import { writeSync } from "node:fs";
 import type { Prisma } from "@prisma/client";
 import { getPrisma } from "../../shared/prisma.js";
 import { canonicalizeStateDisplay, normalizeStateLabel } from "../../shared/geo-normalize.js";
@@ -128,12 +129,28 @@ function isSuspiciousDistrict(v: string | null | undefined): boolean {
   return /office|social category|educational block|urban education block|region/i.test(s);
 }
 
-export async function reconcileSchoolDashboardData(options?: { quiet?: boolean }): Promise<{
+export type ReconcileSchoolDashboardOptions = {
+  quiet?: boolean;
+  /** Emit progress every N schools in scan + derivation phases. `0` disables. Default 50. */
+  progressEvery?: number;
+};
+
+export async function reconcileSchoolDashboardData(
+  options?: ReconcileSchoolDashboardOptions,
+): Promise<{
   schoolsPatched: number;
   revenueSchoolsTouched: number;
   derivationsRecomputed: number;
 }> {
-  const log = options?.quiet ? () => {} : console.log.bind(console);
+  const progressEvery = options?.progressEvery ?? 50;
+  const emitProgress = (line: string) => {
+    if (options?.quiet) return;
+    try {
+      writeSync(1, `${line}\n`);
+    } catch {
+      console.log(line);
+    }
+  };
   const prisma = getPrisma();
 
   const stateRows = await prisma.state.findMany({
@@ -181,11 +198,26 @@ export async function reconcileSchoolDashboardData(options?: { quiet?: boolean }
     },
   });
 
+  const totalSchools = schools.length;
+  emitProgress(
+    `reconcile: loaded ${totalSchools} schools` +
+      (progressEvery > 0 ? ` (progress every ${progressEvery})` : " (progress off)"),
+  );
+
   let schoolsPatched = 0;
   let revenueSchoolsTouched = 0;
   const udisesToRecompute = new Set<string>();
 
-  for (const s of schools) {
+  for (let idx = 0; idx < schools.length; idx++) {
+    const s = schools[idx]!;
+    if (
+      progressEvery > 0 &&
+      (idx === 0 || (idx + 1) % progressEvery === 0 || idx + 1 === totalSchools)
+    ) {
+      emitProgress(
+        `reconcile: schools ${idx + 1}/${totalSchools} | patched=${schoolsPatched} revenue_updates=${revenueSchoolsTouched} recompute_queue=${udisesToRecompute.size}`,
+      );
+    }
     const structured = s.reportCardSnapshot?.payload
       ? structuredFromPayload(s.reportCardSnapshot.payload as unknown)
       : undefined;
@@ -294,48 +326,69 @@ export async function reconcileSchoolDashboardData(options?: { quiet?: boolean }
 
     if (!shouldPatch && !shouldRevenue) continue;
 
-    await prisma.$transaction(async (tx) => {
-      if (shouldPatch) {
-        await tx.school.update({ where: { udise: s.udise }, data });
-        schoolsPatched++;
-      }
-      if (shouldRevenue) {
-        await tx.schoolRevenueScenario.deleteMany({ where: { udise: s.udise } });
-        await tx.schoolRevenueScenario.createMany({
-          data: buildRevenueScenarioRows(s.udise, {
-            totalStudents: effectiveHead,
-            boys: (totalBoys ?? s.totalBoys) ?? undefined,
-            girls: (totalGirls ?? s.totalGirls) ?? undefined,
-          }),
-        });
-        revenueSchoolsTouched++;
-      }
-    });
+    await prisma.$transaction(
+      async (tx) => {
+        if (shouldPatch) {
+          await tx.school.update({ where: { udise: s.udise }, data });
+          schoolsPatched++;
+        }
+        if (shouldRevenue) {
+          await tx.schoolRevenueScenario.deleteMany({ where: { udise: s.udise } });
+          await tx.schoolRevenueScenario.createMany({
+            data: buildRevenueScenarioRows(s.udise, {
+              totalStudents: effectiveHead,
+              boys: (totalBoys ?? s.totalBoys) ?? undefined,
+              girls: (totalGirls ?? s.totalGirls) ?? undefined,
+            }),
+          });
+          revenueSchoolsTouched++;
+        }
+      },
+      { maxWait: 30_000, timeout: 120_000 },
+    );
 
     udisesToRecompute.add(s.udise);
   }
 
+  const recomputeList = [...udisesToRecompute];
+  const recomputeTotal = recomputeList.length;
+  emitProgress(`reconcile: recomputing derivations for ${recomputeTotal} schools…`);
+
   let derivationsRecomputed = 0;
-  for (const udise of udisesToRecompute) {
+  for (let i = 0; i < recomputeList.length; i++) {
+    const udise = recomputeList[i]!;
+    if (
+      progressEvery > 0 &&
+      (i === 0 || (i + 1) % progressEvery === 0 || i + 1 === recomputeTotal)
+    ) {
+      emitProgress(`reconcile: derivations ${i + 1}/${recomputeTotal}`);
+    }
     await recomputeSchoolDerivations(udise);
     derivationsRecomputed++;
   }
 
+  emitProgress("reconcile: refreshing map state/district aggregates…");
   try {
     await refreshMapAggregates();
   } catch (e) {
-    log("refreshMapAggregates failed (tables may be missing); invalidating API cache only.", e);
+    if (!options?.quiet) {
+      console.warn(
+        "refreshMapAggregates failed (tables may be missing); invalidating API cache only.",
+        e,
+      );
+    }
     invalidateMapAndDashboardCache();
   }
 
   invalidateMapAndDashboardCache();
 
-  log(
-    JSON.stringify(
-      { schoolsPatched, revenueSchoolsTouched, derivationsRecomputed, recomputeSet: udisesToRecompute.size },
-      null,
-      2,
-    ),
+  emitProgress(
+    `reconcile: summary ${JSON.stringify({
+      schoolsPatched,
+      revenueSchoolsTouched,
+      derivationsRecomputed,
+      recomputeSet: udisesToRecompute.size,
+    })}`,
   );
 
   return { schoolsPatched, revenueSchoolsTouched, derivationsRecomputed };

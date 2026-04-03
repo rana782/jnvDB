@@ -14,21 +14,15 @@ The API uses **SQLite** at `apps/api/prisma/dev.db` (`DATABASE_URL=file:./dev.db
 ```bash
 cd jnv-platform
 npm install
-cd apps/api
-npm run db:setup
+npm run db:setup -w @jnv/api
 npm run dev
 ```
+
+This starts **both** the API (port 4000) and the web app (port 5173). API-only: `npm run dev:api`. Web-only (when API already running): `npm run dev:web`.
 
 Copy `apps/api/.env.example` to `apps/api/.env` if you do not have one, and set `JNV_DATA_ROOT` to the folder that contains **`jnv-platform/`** (e.g. your `learn_git` root). Discovery finds `jnv-platform/tools/pmshri-crawler/data/pdfs` automatically. Example: `JNV_DATA_ROOT=C:/Users/You/Desktop/learn_git`
 
-Then in another terminal:
-
-```bash
-cd jnv-platform/apps/web
-npm run dev
-```
-
-Open http://localhost:5173 — login **founder** / **change-me-in-prod** (unless you changed seed passwords).
+Open **http://localhost:5173** (or http://127.0.0.1:5173) — login **founder** / **change-me-in-prod** (unless you changed seed passwords). If the page says it cannot load data, confirm both processes started (you should see `api` and `web` in the terminal).
 
 Optional: load all PDFs into SQLite (slow):
 
@@ -36,6 +30,31 @@ Optional: load all PDFs into SQLite (slow):
 cd jnv-platform
 npm run import:run
 ```
+
+Optional: load **master Excel** into SQLite (no PDF extraction; then reconciles map/dashboard):
+
+```bash
+cd jnv-platform
+pip install -r ../jnv_pipeline/requirements.txt
+# If MASTER.xlsx is missing: build it from tools/pmshri-crawler/data/extractions/*.json
+npm run data:build-master
+npm run data:import-sqlite
+# Or one shot: npm run data:refresh-local
+```
+
+## Production data load (Supabase/Postgres, no runtime PDF parsing)
+
+Use static extracted JSON as one-time seed input:
+
+```bash
+cd jnv-platform
+# apps/api/.env should set DATABASE_URL to Supabase direct Postgres URL
+npm run data:import-postgres-json -- --input-dir ../jnv_pipeline/output/json_full --force
+# then refresh dashboard/map rollups against the same DB
+npm run dev:reconcile-dashboard -w @jnv/api
+```
+
+Set `JNV_DISABLE_PDF_IMPORT=true` in API env for deployment so `/api/import/run` is blocked.
 
 ## Optional: PostgreSQL (pgAdmin)
 
@@ -62,6 +81,8 @@ npm run import:run
 # or force re-extract:
 npm run import:run -- --force
 ```
+
+`import:run` is offline extraction-only and should not be used in deployed production flow.
 
 ## Quality gates
 

@@ -25,6 +25,13 @@ export const registerImportRoutes: FastifyPluginAsync = async (app) => {
     "/import/run",
     { preHandler: [authenticate, requireRoles("super_admin", "founder", "analyst")] },
     async (request, reply) => {
+      if (env.JNV_DISABLE_PDF_IMPORT) {
+        throw new AppError(
+          "PDF_IMPORT_DISABLED",
+          "Server-side PDF import is disabled. Populate the database from static JSON via jnv_pipeline/import_json_to_postgres.py and run reconcile; use JNV_DATA_ROOT + pdfRelativePath for report PDF viewing only.",
+          403,
+        );
+      }
       const body = runBody.parse(request.body ?? {});
       let paths;
       try {

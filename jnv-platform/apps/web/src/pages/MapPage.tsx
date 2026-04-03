@@ -53,7 +53,7 @@ async function loadMap(qs: string): Promise<MapAgg> {
 }
 
 async function loadGeoStates(): Promise<GeoStateMeta[]> {
-  return apiJson<GeoStateMeta[]>("/api/geo/states");
+  return apiJson<GeoStateMeta[]>("/api/states");
 }
 
 async function loadDistricts(state: string, qs: string): Promise<MapDistrictResponse> {

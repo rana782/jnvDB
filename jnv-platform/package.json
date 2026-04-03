@@ -5,7 +5,9 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm run dev -w @jnv/api",
+    "dev": "concurrently -n api,web -c blue,magenta \"npm run dev -w @jnv/api\" \"npm run dev -w @jnv/web\"",
+    "dev:api": "npm run dev -w @jnv/api",
+    "dev:web": "npm run dev -w @jnv/web",
     "build": "npm run build -w @jnv/api && npm run build -w @jnv/web",
     "lint": "npm run lint -w @jnv/api && npm run lint -w @jnv/web",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
@@ -19,6 +21,10 @@
     "db:setup": "npm run db:setup -w @jnv/api",
     "dev:promote-partial": "npm run dev:promote-partial -w @jnv/api",
     "dev:reconcile-dashboard": "npm run dev:reconcile-dashboard -w @jnv/api",
+    "data:import-sqlite": "node scripts/import-master-sqlite.cjs",
+    "data:import-postgres-json": "node scripts/import-json-postgres.cjs",
+    "data:build-master": "node scripts/build-master-excel.cjs",
+    "data:refresh-local": "npm run data:build-master && npm run data:import-sqlite",
     "import:run": "npm run import:run -w @jnv/api",
     "import:run:ocr": "npm run import:run:ocr -w @jnv/api",
     "verify:pdf-db": "npm run verify:pdf-db -w @jnv/api",
@@ -30,6 +36,7 @@
     "render-build": "node scripts/render-api-build.cjs"
   },
   "devDependencies": {
+    "concurrently": "^9.1.2",
     "prettier": "^3.4.2"
   }
 }

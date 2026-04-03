@@ -1,15 +1,3 @@
-# Render Blueprint: API + free Postgres in one flow.
-# https://render.com/docs/infrastructure-as-code
-#
-# You still must sign in to Render and click to create this from the repo.
-# After the first deploy: set CORS_ORIGIN to your Vercel URL (Settings → Environment).
-
-databases:
-  - name: jnv-postgres
-    databaseName: jnv_intel
-    user: jnv
-    plan: free
-
 services:
   - type: web
     name: jnv-api
@@ -23,14 +11,15 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Data lives in Postgres (Excel import / CI). Server-side PDF extraction is off.
+      - key: JNV_DISABLE_PDF_IMPORT
+        value: "true"
       - key: COOKIE_SECURE
         value: "true"
       - key: JWT_SECRET
         generateValue: true
       - key: DATABASE_URL
-        fromDatabase:
-          name: jnv-postgres
-          property: connectionString
+        sync: false
       # Add in dashboard: https://your-app.vercel.app (no trailing slash)
       - key: CORS_ORIGIN
         sync: false

@@ -1,6 +1,6 @@
 /**
  * DB-driven contract tests: no in-memory mocks of school data.
- * Uses apps/api/prisma/dev.db (explicit DATABASE_URL) so results reflect whatever is loaded (seed/import).
+ * Uses DATABASE_URL from the environment (see vitest.config.ts + apps/api/.env) — must be PostgreSQL for the current Prisma schema.
  *
  * Parser golden-path accuracy lives in `modules/import/pdf-extraction.integration.test.ts` (real PDF → tmp DB → API).
  */
@@ -9,7 +9,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
-import { clearEnvCacheForTests } from "../config/env.js";
 import {
   dashboardOverview,
   dashboardProgress,
@@ -29,22 +28,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_ROOT = path.resolve(__dirname, "..", "..");
 const FIXTURE_PDF = path.join(API_ROOT, "test", "fixtures", "report-card-sample.pdf");
 const DEV_DB_PATH = path.join(API_ROOT, "prisma", "dev.db");
-const DEV_DB_URL = `file:${DEV_DB_PATH.replace(/\\/g, "/")}`;
 
-let savedDatabaseUrl: string | undefined;
-
-describe("DB-driven platform checks (dev.db)", () => {
+describe("DB-driven platform checks", () => {
   beforeAll(async () => {
-    savedDatabaseUrl = process.env.DATABASE_URL;
-    process.env.DATABASE_URL = DEV_DB_URL;
-    clearEnvCacheForTests();
     await resetPrismaForTests();
   });
 
   afterAll(async () => {
-    process.env.DATABASE_URL = savedDatabaseUrl;
-    if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-    clearEnvCacheForTests();
     await resetPrismaForTests();
   });
 
