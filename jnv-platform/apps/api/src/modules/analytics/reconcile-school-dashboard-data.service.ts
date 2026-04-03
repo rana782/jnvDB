@@ -4,6 +4,7 @@
  *
  * Use after bulk import when many rows have null totalStudents / geographicState but snapshot or
  * `apiStateName` / social "Total" can supply values — fixes dashboard + map KPIs.
+ * Also syncs `latitude`/`longitude` from `schools.json` (see `JNV_SCHOOLS_JSON`) so state map markers use real coords.
  */
 import { writeSync } from "node:fs";
 import type { Prisma } from "@prisma/client";
@@ -16,6 +17,7 @@ import { buildRevenueScenarioRows } from "../import/ingest.service.js";
 import { refreshMapAggregates } from "../map/map-rollup.service.js";
 import { recomputeSchoolDerivations } from "../schools/schools.service.js";
 import { INDIAN_STATES_FOR_SEED } from "../../data/nvs-states-regions.js";
+import { syncSchoolCoordinatesFromSchoolsJson } from "./sync-school-coordinates.service.js";
 
 function structuredFromPayload(payload: unknown): ReportCardParseResult | undefined {
   if (!payload || typeof payload !== "object") return undefined;
@@ -141,6 +143,9 @@ export async function reconcileSchoolDashboardData(
   schoolsPatched: number;
   revenueSchoolsTouched: number;
   derivationsRecomputed: number;
+  coordinatesUpdated: number;
+  coordinatesRowsInFile: number;
+  coordinatesFileMissing: boolean;
 }> {
   const progressEvery = options?.progressEvery ?? 50;
   const emitProgress = (line: string) => {
@@ -152,6 +157,12 @@ export async function reconcileSchoolDashboardData(
     }
   };
   const prisma = getPrisma();
+
+  emitProgress("reconcile: syncing school lat/lon from schools.json (map markers)…");
+  const coordSync = await syncSchoolCoordinatesFromSchoolsJson({ quiet: options?.quiet });
+  emitProgress(
+    `reconcile: coordinates ${coordSync.missingFile ? "file missing — set JNV_SCHOOLS_JSON or add tools/pmshri-crawler/data/schools.json" : `updated ${coordSync.updated} schools (${coordSync.rowsInFile} rows in file)`}`,
+  );
 
   const stateRows = await prisma.state.findMany({
     select: { id: true, name: true, normalizedName: true },
@@ -391,5 +402,12 @@ export async function reconcileSchoolDashboardData(
     })}`,
   );
 
-  return { schoolsPatched, revenueSchoolsTouched, derivationsRecomputed };
+  return {
+    schoolsPatched,
+    revenueSchoolsTouched,
+    derivationsRecomputed,
+    coordinatesUpdated: coordSync.updated,
+    coordinatesRowsInFile: coordSync.rowsInFile,
+    coordinatesFileMissing: coordSync.missingFile,
+  };
 }

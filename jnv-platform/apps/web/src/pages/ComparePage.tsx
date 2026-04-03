@@ -176,13 +176,6 @@ function CompareTable({ schools }: { schools: CompareSchoolRow[] }) {
 
     pushNumeric(
       "Digital",
-      "Smart class TV",
-      schools.map((s) => digital(s)?.smartClassTv ?? null),
-      "max",
-      (v) => fmtNum(v),
-    );
-    pushNumeric(
-      "Digital",
       "Laptops",
       schools.map((s) => digital(s)?.laptops ?? null),
       "max",
@@ -204,18 +197,11 @@ function CompareTable({ schools }: { schools: CompareSchoolRow[] }) {
     );
     pushNumeric(
       "Digital",
-      "Printers",
-      schools.map((s) => digital(s)?.printers ?? null),
-      "max",
-      (v) => fmtNum(v),
-    );
-    pushNumeric(
-      "Digital",
       "Total devices",
       schools.map((s) => {
         const d = digital(s);
         if (!d) return null;
-        const parts = [d.smartClassTv, d.laptops, d.desktops, d.tablets, d.printers];
+        const parts = [d.laptops, d.desktops, d.tablets];
         if (parts.every((x) => x == null)) return null;
         return parts.reduce<number>(
           (sum, x) => sum + (typeof x === "number" && Number.isFinite(x) ? x : 0),

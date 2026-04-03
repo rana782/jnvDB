@@ -66,18 +66,33 @@ async function loadSchools(qs: string): Promise<SchoolListResponse> {
   return apiJson<SchoolListResponse>(`/api/schools?${qs}`);
 }
 
-async function loadAllStateSchools(state: string): Promise<SchoolListResponse> {
-  const pageSize = 100;
+function normalizeStateKey(v: string): string {
+  return v
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z]/g, "");
+}
+
+function schoolMatchesSelectedState(
+  s: SchoolListResponse["items"][number],
+  state: string,
+): boolean {
+  const target = normalizeStateKey(state);
+  const candidates = [s.stateName, s.geographicState].filter(
+    (x): x is string => typeof x === "string" && x.trim().length > 0,
+  );
+  return candidates.some((c) => normalizeStateKey(c) === target);
+}
+
+async function loadSchoolsByPages(
+  queryFactory: (page: number, pageSize: number) => string,
+  pageSize = 100,
+): Promise<SchoolListResponse> {
   const all: SchoolListResponse["items"] = [];
   let page = 1;
   let total = 0;
   while (true) {
-    const qs = new URLSearchParams({
-      page: String(page),
-      pageSize: String(pageSize),
-      state,
-    }).toString();
-    const res = await loadSchools(qs);
+    const res = await loadSchools(queryFactory(page, pageSize));
     total = res.total;
     all.push(...res.items);
     if (all.length >= total || res.items.length === 0) break;
@@ -85,6 +100,27 @@ async function loadAllStateSchools(state: string): Promise<SchoolListResponse> {
     if (page > 100) break;
   }
   return { items: all, total, page: 1, pageSize: all.length || pageSize };
+}
+
+async function loadAllStateSchools(state: string): Promise<SchoolListResponse> {
+  const byStateFilter = await loadSchoolsByPages((page, pageSize) =>
+    new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+      state,
+    }).toString(),
+  );
+  if (byStateFilter.total > 0) return byStateFilter;
+
+  // Fallback for canonical label drift between map state names and /api/schools contains filter.
+  const allSchools = await loadSchoolsByPages((page, pageSize) =>
+    new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+    }).toString(),
+  );
+  const items = allSchools.items.filter((s) => schoolMatchesSelectedState(s, state));
+  return { items, total: items.length, page: 1, pageSize: items.length || 100 };
 }
 
 function formatInrShort(n: number) {
@@ -475,6 +511,19 @@ export function MapPage() {
                 >
                   Back to India
                 </button>
+              ) : null}
+              {selectedState &&
+              !stateSchoolsQ.isPending &&
+              stateSchoolItems.length > 0 &&
+              stateMarkers.length === 0 ? (
+                <div className="pointer-events-none absolute bottom-3 left-3 right-3 z-20 rounded-md border border-amber-200/80 bg-amber-50/95 px-2.5 py-2 text-[10px] text-amber-950 shadow-sm sm:left-auto sm:right-3 sm:max-w-md sm:text-[11px]">
+                  Schools in this state have no latitude/longitude in the database yet — map markers need real
+                  coordinates. Run{" "}
+                  <code className="rounded bg-white/80 px-1">npm run dev:reconcile-dashboard -w @jnv/api</code> (or
+                  deploy with <code className="rounded bg-white/80 px-1">tools/pmshri-crawler/data/schools.json</code>{" "}
+                  and optional <code className="rounded bg-white/80 px-1">JNV_SCHOOLS_JSON</code>) so reconcile can sync
+                  ArcGIS lat/lon into Postgres.
+                </div>
               ) : null}
               <Suspense
                 fallback={

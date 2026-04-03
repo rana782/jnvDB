@@ -272,14 +272,18 @@ def upsert_record(cur: Any, rec: dict[str, Any], state_map: dict[str, str]) -> N
     pdf_rel = f"tools/pmshri-crawler/data/pdfs/{source_pdf_name}" if source_pdf_name else None
     src_hash = f"json-seed:{udise}"
 
+    lat = nfloat(school.get("latitude"))
+    lon = nfloat(school.get("longitude"))
+
     cur.execute(
         """
         INSERT INTO "School" (
           "udise","schoolName","geographicState","geographicDistrict",
           "stateId","academicYear","totalStudents","totalBoys","totalGirls",
+          "latitude","longitude",
           "pdfRelativePath","sourcePdfHash","parsingStatus","extractorVersion","overallExtractionConfidence","updatedAt"
         )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'COMPLETE','jnv_json_seed.1.0',%s,CURRENT_TIMESTAMP)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'COMPLETE','jnv_json_seed.1.0',%s,CURRENT_TIMESTAMP)
         ON CONFLICT("udise") DO UPDATE SET
           "schoolName"=EXCLUDED."schoolName",
           "geographicState"=EXCLUDED."geographicState",
@@ -289,6 +293,8 @@ def upsert_record(cur: Any, rec: dict[str, Any], state_map: dict[str, str]) -> N
           "totalStudents"=EXCLUDED."totalStudents",
           "totalBoys"=EXCLUDED."totalBoys",
           "totalGirls"=EXCLUDED."totalGirls",
+          "latitude"=COALESCE(EXCLUDED."latitude","School"."latitude"),
+          "longitude"=COALESCE(EXCLUDED."longitude","School"."longitude"),
           "pdfRelativePath"=COALESCE(EXCLUDED."pdfRelativePath","School"."pdfRelativePath"),
           "sourcePdfHash"=COALESCE(EXCLUDED."sourcePdfHash","School"."sourcePdfHash"),
           "parsingStatus"='COMPLETE',
@@ -305,6 +311,8 @@ def upsert_record(cur: Any, rec: dict[str, Any], state_map: dict[str, str]) -> N
             nint(school.get("total_students")),
             nint(school.get("total_boys")),
             nint(school.get("total_girls")),
+            lat,
+            lon,
             pdf_rel,
             src_hash,
             nfloat(school.get("parse_confidence")),

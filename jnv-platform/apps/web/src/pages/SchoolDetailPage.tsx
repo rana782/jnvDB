@@ -294,11 +294,9 @@ export function SchoolDetailPage() {
     { name: "Gap", value: Math.max(0, infraStatus.length - infraAvailable), color: "#e2e8f0" },
   ];
   const digitalRows = [
-    { label: "Smart class TV", count: s.sections?.digital?.smartClassTv ?? 0 },
     { label: "Desktops", count: s.sections?.digital?.desktops ?? 0 },
     { label: "Laptops", count: s.sections?.digital?.laptops ?? 0 },
     { label: "Tablets", count: s.sections?.digital?.tablets ?? 0 },
-    { label: "Printers", count: s.sections?.digital?.printers ?? 0 },
     { label: "Projectors", count: s.sections?.digital?.projectors ?? 0 },
   ];
   const digitalFunctional = digitalRows.filter((d) => d.count > 0).length;
