@@ -187,18 +187,6 @@ export function SchoolDetailPage() {
     onSuccess: () => q.refetch(),
   });
 
-  const pdfPathForProbe = q.data?.pdfPath;
-  const pdfProbeEnabled = udise.length === 11 && !!pdfPathForProbe?.trim() && q.isSuccess;
-  const pdfProbe = useQuery({
-    queryKey: ["school-pdf", udise],
-    queryFn: async () => {
-      const res = await fetch(`/api/schools/${udise}/pdf`, { method: "HEAD", credentials: "include" });
-      return res.ok;
-    },
-    enabled: pdfProbeEnabled,
-    staleTime: 120_000,
-  });
-
   if (q.isError) {
     const msg = q.error instanceof Error ? q.error.message : String(q.error ?? "");
     return (
@@ -238,7 +226,6 @@ export function SchoolDetailPage() {
     enrolmentMinority = [],
     enrolmentOthers = [],
     enrolmentAge = [],
-    pdfPath,
   } = q.data;
 
   const lowRev = pickRevenueByKind(s, "LOW");
@@ -291,8 +278,6 @@ export function SchoolDetailPage() {
           ? ageTotalMag
           : null
       : null;
-
-  const pdfPathPresent = udise.length === 11 && !!pdfPath?.trim();
 
   const fetching = q.isFetching ? "opacity-[0.92]" : "";
   const infraStatus = [
@@ -629,28 +614,6 @@ export function SchoolDetailPage() {
           </div>
         </ChartCard>
 
-        <ChartCard title="Teachers" subtitle="Academic roles and Gender breakdown">
-          {s.chartSeries.teachers?.length === 0 ? (
-             <ChartEmpty title="No teacher breakdown" hint="Extraction did not find teacher detail rows." />
-          ) : (
-            <div className="h-[290px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={s.chartSeries.teachers.filter(t => t.category === "Academic" || t.category === "Gender")} margin={{ top: 12, right: 8, left: 0, bottom: 48 }}>
-                   <CartesianGrid stroke="#E2E8F0" />
-                   <XAxis dataKey="label" {...CHART_AXIS} interval={0} angle={-28} textAnchor="end" height={48} tick={{ fill: "#64748B", fontSize: 10 }} />
-                   <YAxis {...CHART_AXIS} allowDecimals={false} width={32} />
-                   <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number | string) => [v ?? 0, "Teachers"]} />
-                   <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                      {s.chartSeries.teachers.map((d, i) => (
-                        <Cell key={i} fill={d.category === "Gender" ? (d.label === "Female" ? "#EC4899" : "#2563EB") : PALETTE[i % PALETTE.length]} />
-                      ))}
-                   </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </ChartCard>
-
       </motion.div>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -733,41 +696,6 @@ export function SchoolDetailPage() {
           ) : null}
         </section>
       </div>
-
-      {pdfPathPresent ? (
-        <section className="premium-panel rounded-xl p-5 premium-ring">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-ink">Report card PDF</h2>
-            <a
-              href={`/api/schools/${udise}/pdf`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-sm font-medium text-accent hover:underline"
-            >
-              Open in new tab
-            </a>
-          </div>
-          {pdfProbe.isFetching ? (
-            <p className="mt-3 text-xs text-muted">Checking whether the PDF is available on this server…</p>
-          ) : null}
-          {pdfProbe.isSuccess && pdfProbe.data === false ? (
-            <p className="mt-3 rounded-md border border-amber-200/60 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
-              A PDF path is stored for this school, but the file was not found under the API&apos;s data root (common in dev
-              when PDFs are not on disk). Use &quot;Open in new tab&quot; if you have since added the file, or ignore this
-              section for Excel-only data.
-            </p>
-          ) : null}
-          {pdfProbe.isSuccess && pdfProbe.data ? (
-            <div className="mt-4 overflow-hidden rounded-lg border border-line bg-surface-3">
-              <iframe
-                title="School PDF"
-                src={`/api/schools/${udise}/pdf`}
-                className="h-[min(70vh,640px)] w-full"
-              />
-            </div>
-          ) : null}
-        </section>
-      ) : null}
 
       <div className="pb-4 text-center">
         <Link to="/map" className="text-sm text-accent hover:underline">

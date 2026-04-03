@@ -1,4 +1,5 @@
 # Manual only: seed regions/states/roles + founder user (argon2 hash) on production Postgres (e.g. Supabase).
+# Triggers: workflow_dispatch only (no push / deploy / schedule).
 #
 # Repo → Settings → Secrets and variables → Actions — set:
 #   Required:
@@ -11,6 +12,9 @@
 # Run: Actions → "Seed production database" → Run workflow → confirm = SEED
 
 name: Seed production database
+
+permissions:
+  contents: read
 
 on:
   workflow_dispatch:
@@ -48,4 +52,9 @@ jobs:
           SEED_ADMIN_ROLLCODE: ${{ secrets.SEED_ADMIN_ROLLCODE }}
           SEED_FOUNDER_PASSWORD: ${{ secrets.SEED_FOUNDER_PASSWORD }}
           SEED_FOUNDER_ROLLCODE: ${{ secrets.SEED_FOUNDER_ROLLCODE }}
-        run: npx prisma db seed
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL is empty. Add repository secret DATABASE_URL or PRODUCTION_DATABASE_URL."
+            exit 1
+          fi
+          npx prisma db seed
