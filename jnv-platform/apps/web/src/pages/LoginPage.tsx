@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiLogin } from "../lib/api";
+import { apiLogin, JNV_TOKEN_STORAGE_KEY } from "../lib/api";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -12,7 +12,8 @@ export function LoginPage() {
 
   const login = useMutation({
     mutationFn: () => apiLogin(rollcode, password),
-    onSuccess: async () => {
+    onSuccess: async (data) => {
+      localStorage.setItem(JNV_TOKEN_STORAGE_KEY, data.token);
       await qc.invalidateQueries({ queryKey: ["me"] });
       navigate("/map", { replace: true });
     },
@@ -23,7 +24,7 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-canvas bg-premium-radial px-4">
       <div className="premium-panel w-full max-w-md rounded-xl p-8 premium-ring">
         <h1 className="text-xl font-semibold premium-gradient-text">Founder login</h1>
-        <p className="mt-1 text-sm text-muted">Rollcode and password (httpOnly cookie session).</p>
+        <p className="mt-1 text-sm text-muted">Rollcode and password (JWT stored in this browser).</p>
         <form
           className="mt-6 space-y-4"
           onSubmit={(e) => {

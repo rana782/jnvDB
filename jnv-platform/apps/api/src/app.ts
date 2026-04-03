@@ -1,6 +1,5 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import cookie from "@fastify/cookie";
 import jwt from "@fastify/jwt";
 import { loadEnv } from "./config/env.js";
 import { logger } from "./shared/logger.js";
@@ -13,7 +12,6 @@ import { registerMapRoutes } from "./modules/map/routes.js";
 import { registerReportsRoutes } from "./modules/reports/routes.js";
 import { registerAuditRoutes } from "./modules/audit/routes.js";
 import { registerAuthRoutes } from "./modules/auth/routes.js";
-import { registerJwtCookieHook } from "./modules/auth/jwt-cookie.js";
 import { registerGeoRoutes } from "./modules/geo/routes.js";
 import { disconnectPrisma } from "./shared/prisma.js";
 
@@ -27,23 +25,13 @@ export async function buildApp() {
 
   await app.register(cors, {
     origin: env.CORS_ORIGIN.split(",").map((s) => s.trim()),
-    credentials: true,
-  });
-
-  await app.register(cookie, {
-    secret: env.JWT_SECRET,
+    credentials: false,
   });
 
   await app.register(jwt, {
     secret: env.JWT_SECRET,
     sign: { expiresIn: "7d" },
-    cookie: {
-      cookieName: "jnv_token",
-      signed: false,
-    },
   });
-
-  registerJwtCookieHook(app);
 
   app.setErrorHandler((err: unknown, request, reply) => {
     if (isAppError(err)) {

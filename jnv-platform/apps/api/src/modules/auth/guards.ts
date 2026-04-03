@@ -15,6 +15,10 @@ declare module "fastify" {
 }
 
 export async function authenticate(request: FastifyRequest, _reply: FastifyReply) {
+  const authHeader = request.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    throw new AppError("UNAUTHORIZED", "Authentication required", 401);
+  }
   try {
     await request.jwtVerify<JwtPayload>();
     const payload = request.user as JwtPayload;

@@ -37,7 +37,6 @@
     "verify:capture-api": "tsx scripts/capture-school-detail-response.ts"
   },
   "dependencies": {
-    "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.0.2",
     "@fastify/jwt": "^9.0.3",
     "@fastify/multipart": "^9.0.3",

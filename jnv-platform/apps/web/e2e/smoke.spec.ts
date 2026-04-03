@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ context, page }) => {
   await context.clearCookies();
+  await page.addInitScript(() => {
+    localStorage.removeItem("jnv_token");
+  });
   await page.request.post("/api/auth/logout", { data: {} }).catch(() => undefined);
 });
 
